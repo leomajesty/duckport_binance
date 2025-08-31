@@ -402,7 +402,7 @@ class FlightActions:
         try:
             result = self.db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
-            if abs(pd.to_datetime(result[0]) - datetime.datetime.now(tz=datetime.timezone.utc)) > datetime.timedelta(minutes=KLINE_INTERVAL_MINUTES) * 95:
+            if abs(pd.to_datetime(result[0]) - datetime.datetime.now(tz=datetime.timezone.utc)) > datetime.timedelta(minutes=KLINE_INTERVAL_MINUTES) * 495:
                 logger.warning(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
                 raise ValueError(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
             max_time = result[0]
