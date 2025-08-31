@@ -39,6 +39,7 @@ class FlightServer(flight.FlightServerBase):
         self._init_database()
         self.flight_gets = FlightGets(self.db_manager, self.redundancy_hours, pqt_path)
         self.flight_actions = FlightActions(self.db_manager)
+        self.async_job()
 
         logger.info(f"Flight server initialized at {self._location}")
         logger.info(f"Redundancy hours: {self.redundancy_hours} hours")
