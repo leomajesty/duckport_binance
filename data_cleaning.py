@@ -31,7 +31,6 @@ def find_useless_symbols(market: str):
 def remove_out_of_trading_time(market: str):
     trading_range = get_all_trading_range(market)
     useless_symbols = find_useless_symbols(market)
-    s = ','.join(useless_symbols['symbol'])
     if ENABLE_PQT:
         files = glob(f'data/pqt/{market}_{KLINE_INTERVAL}/*.parquet')
         for file in tqdm(files, desc=f'处理{market}数据'):

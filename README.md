@@ -1,6 +1,7 @@
 # DuckPort - 加密货币K线数据服务
 
 基于Arrow Flight协议的加密货币K线数据服务，支持高效的历史数据和实时数据查询传输。
+github地址：https://github.com/leomajesty/duckport_binance
 
 ## 功能特性
 
