@@ -2,7 +2,6 @@
 """
 Flight服务器启动脚本
 """
-import datetime
 import sys
 import os
 import signal

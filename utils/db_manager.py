@@ -3,8 +3,13 @@ import duckdb
 from typing import Optional, Any, List, Dict
 
 import pandas as pd
+import pyarrow as pa
 
 from utils.log_kit import logger
+
+dtypes_dict = {
+    'trade_num': pa.int32(),
+}
 
 
 class DatabaseManager:
@@ -149,7 +154,17 @@ class DatabaseManager:
                     result = self._connection.execute(query, params)
                 else:
                     result = self._connection.execute(query)
-                return result.fetch_arrow_table()
+                table = result.fetch_arrow_table()
+                print(f'{table.nbytes /1024} kb')
+                for col, dtype in dtypes_dict.items():
+                    if col in table.column_names and table.schema.field(col).type != dtype:
+                        table = table.set_column(
+                            table.schema.get_field_index(col),
+                            col,
+                            table[col].cast(dtype)
+                        )
+                print(f'{table.nbytes / 1024} kb')
+                return table
             except Exception as e:
                 logger.error(f"Arrow表查询失败: {e}")
                 logger.error(f"问题查询: {query}")
