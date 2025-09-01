@@ -86,9 +86,11 @@ class FlightClient:
             return []
 
     def get_market(self, market: str, interval: int = 60, offset: int = 0,
-                   begin: datetime.datetime = datetime.datetime.now() - datetime.timedelta(days=100), end: datetime.datetime = None):
+                   begin: datetime.datetime = None, end: datetime.datetime = None):
         """执行SQL查询"""
         try:
+            if not begin:
+                begin = datetime.datetime.now() - datetime.timedelta(days=100)
             # 创建ticket
             ticket_dict = {"type": "market", "market": market, "interval": interval, "offset": offset,
                            "begin": begin.strftime('%Y-%m-%d %H:%M:%S')}
@@ -109,9 +111,11 @@ class FlightClient:
             return None
 
     def get_funding(self, market: str = "usdt_perp",
-                    begin: datetime.datetime = datetime.datetime.now() - datetime.timedelta(days=100), end: datetime.datetime = None):
+                    begin: datetime.datetime = None, end: datetime.datetime = None):
         """获取资金费率数据"""
         try:
+            if not begin:
+                begin = datetime.datetime.now() - datetime.timedelta(days=100)
             # 创建ticket
             ticket_dict = {"type": "funding", "market": market, "begin": begin.strftime('%Y-%m-%d %H:%M:%S')}
             if end:
@@ -131,9 +135,11 @@ class FlightClient:
             return None
 
     def get_symbol(self, market: str, symbol: str, interval: int = 60, offset: int = 0,
-                   begin: datetime.datetime = datetime.datetime.now() - datetime.timedelta(days=100), end: datetime.datetime = None):
+                   begin: datetime.datetime = None, end: datetime.datetime = None):
         """获取指定symbol的数据"""
         try:
+            if not begin:
+                begin = datetime.datetime.now() - datetime.timedelta(days=100)
             # 创建ticket
             ticket_dict = {"type": "symbol", "market": market, "symbol": symbol,
                             "interval": interval, "offset": offset,
