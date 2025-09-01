@@ -1,5 +1,5 @@
 import asyncio
-import datetime
+from datetime import timedelta
 import json
 import os
 import pandas as pd
@@ -377,7 +377,7 @@ class FlightServer(flight.FlightServerBase):
 
         async def periodic():
             while True:
-                next_time = next_run_time('1h') + datetime.timedelta(minutes=3)  # 每小时的5分执行
+                next_time = next_run_time('1h') + timedelta(minutes=3)  # 每小时的5分执行
                 divider(f"[Scheduler] next retention job runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
                 await async_sleep_until_run_time(next_time)
                 try:

@@ -1,4 +1,4 @@
-import datetime
+from datetime import *
 import os
 import glob
 import pandas as pd
@@ -26,7 +26,7 @@ class FlightActions:
         try:
             result = self.db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
-            if abs(pd.to_datetime(result[0]) - datetime.datetime.now(tz=datetime.timezone.utc)) > datetime.timedelta(
+            if abs(pd.to_datetime(result[0]) - datetime.now(tz=timezone.utc)) > timedelta(
                     minutes=KLINE_INTERVAL_MINUTES) * 495:
                 logger.warning(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
                 raise ValueError(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
@@ -163,10 +163,10 @@ class FlightGets:
             threshold = self._get_historical_threshold(market)
 
             # 计算扩展范围（添加冗余时间）
-            historical_begin = begin - datetime.timedelta(hours=self.redundancy_hours)
-            historical_end = min(end, threshold) + datetime.timedelta(hours=self.redundancy_hours)
-            recent_begin = max(begin, threshold) - datetime.timedelta(hours=self.redundancy_hours)
-            recent_end = end + datetime.timedelta(hours=self.redundancy_hours)
+            historical_begin = begin - timedelta(hours=self.redundancy_hours)
+            historical_end = min(end, threshold) + timedelta(hours=self.redundancy_hours)
+            recent_begin = max(begin, threshold) - timedelta(hours=self.redundancy_hours)
+            recent_end = end + timedelta(hours=self.redundancy_hours)
 
             logger.info(
                 f"扩展查询范围: 历史数据({historical_begin} - {historical_end}), 近期数据({recent_begin} - {recent_end})")
@@ -260,11 +260,11 @@ class FlightGets:
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
             raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
         if begin is None:
-            datetime.datetime.now() - datetime.timedelta(days=90)
+            datetime.now() - timedelta(days=90)
         elif isinstance(begin, str):
             begin = parser.parse(begin)
         if end is None:
-            end = datetime.datetime.now()
+            end = datetime.now()
         elif isinstance(end, str):
             end = parser.parse(end)
 
@@ -291,11 +291,11 @@ class FlightGets:
     def get_funding(self, begin=None, end=None, **kwargs):
         """获取资金费率信息"""
         if begin is None:
-            begin = datetime.datetime.now() - datetime.timedelta(days=90)
+            begin = datetime.now() - timedelta(days=90)
         elif isinstance(begin, str):
             begin = parser.parse(begin)
         if end is None:
-            end = datetime.datetime.now()
+            end = datetime.now()
         elif isinstance(end, str):
             end = parser.parse(end)
         pass
@@ -311,11 +311,11 @@ class FlightGets:
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
             raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
         if begin is None:
-            begin = datetime.datetime.now() - datetime.timedelta(days=90)
+            begin = datetime.now() - timedelta(days=90)
         elif isinstance(begin, str):
             begin = parser.parse(begin)
         if end is None:
-            end = datetime.datetime.now()
+            end = datetime.now()
         elif isinstance(end, str):
             end = parser.parse(end)
 
