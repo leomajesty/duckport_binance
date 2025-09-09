@@ -8,7 +8,10 @@ import asyncio
 import datetime
 import random
 
-from utils.config import KLINE_INTERVAL, ENABLE_PQT
+import duckdb
+
+from data_cleaning import remove_out_of_trading_time, cleaning
+from utils.config import KLINE_INTERVAL, ENABLE_PQT, DUCKDB_DIR
 from utils.log_kit import logger, divider
 from hist import (
     # Config
@@ -159,4 +162,7 @@ def run(interval='5m'):
 
 if __name__ == "__main__":
     divider('loading history data')
-    run(KLINE_INTERVAL)
+
+    # run(KLINE_INTERVAL)
+
+    cleaning()

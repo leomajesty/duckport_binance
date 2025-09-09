@@ -34,102 +34,13 @@ class FlightServer(flight.FlightServerBase):
         # 加载环境配置
         self.redundancy_hours = REDUNDANCY_HOURS
 
-        self._init_database()
         self.flight_gets = FlightGets(self.db_manager, self.redundancy_hours, pqt_path)
         self.flight_actions = FlightActions(self.db_manager)
+
         self.async_job()
 
         logger.info(f"Flight server initialized at {self._location}")
         logger.info(f"Redundancy hours: {self.redundancy_hours} hours")
-
-    def _init_database(self):
-        self.db_manager.execute_write("""CREATE TABLE IF NOT EXISTS config_dict (
-            key VARCHAR,
-            value VARCHAR,
-            PRIMARY KEY (key)
-        );""")
-        self._verify_kline_interval_consistency()
-        self.db_manager.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_perp{SUFFIX} (
-            open_time TIMESTAMP,
-            symbol VARCHAR,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            quote_volume DOUBLE,
-            trade_num INT,
-            taker_buy_base_asset_volume DOUBLE,
-            taker_buy_quote_asset_volume DOUBLE,
-            avg_price DOUBLE,
-            PRIMARY KEY (open_time, symbol)
-        );""")
-
-        self.db_manager.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_spot{SUFFIX} (
-            open_time TIMESTAMP,
-            symbol VARCHAR,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            quote_volume DOUBLE,
-            trade_num INT,
-            taker_buy_base_asset_volume DOUBLE,
-            taker_buy_quote_asset_volume DOUBLE,
-            avg_price DOUBLE,
-            PRIMARY KEY (open_time, symbol)
-        );""")
-
-        self.db_manager.execute_write("""CREATE TABLE IF NOT EXISTS exginfo (
-            market VARCHAR,
-            symbol VARCHAR,
-            status VARCHAR,
-            base_asset VARCHAR,
-            quote_asset VARCHAR,
-            price_tick VARCHAR,
-            lot_size VARCHAR,
-            min_notional_value VARCHAR,
-            contract_type VARCHAR,
-            margin_asset VARCHAR,
-            pre_market BOOLEAN,
-            created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (market, symbol)
-        );""")
-
-    def _verify_kline_interval_consistency(self):
-        """验证k线周期配置一致性"""
-        try:
-            # 向 config_dict 表写入当前配置
-            self.db_manager.execute_write(
-                "INSERT INTO config_dict (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
-                ('kline_interval', KLINE_INTERVAL)
-            )
-            # 从 config_dict 表读取已存储的配置
-            stored_value = self.db_manager.fetch_one(
-                "SELECT value FROM config_dict WHERE key = 'kline_interval'"
-            )
-            
-            if not stored_value:
-                logger.error("无法从数据库读取k线周期配置")
-                raise ValueError("数据库配置读取失败")
-            
-            stored_interval = stored_value[0]
-            
-            # 比较配置一致性
-            if stored_interval != KLINE_INTERVAL:
-                error_msg = f"k线周期配置不一致！配置文件: {KLINE_INTERVAL}, 数据库: {stored_interval}"
-                logger.error(error_msg)
-                logger.error("请检查配置文件或清理数据库后重新启动系统")
-                raise ValueError(error_msg)
-            
-            logger.info("k线周期配置一致性验证通过")
-            
-        except Exception as e:
-            logger.error(f"k线周期配置一致性验证失败: {e}")
-            logger.error("系统将退出，请检查配置后重新启动")
-            import sys
-            sys.exit(1)
 
     @func_timer
     def do_get(self, context, ticket):
@@ -280,13 +191,15 @@ class FlightServer(flight.FlightServerBase):
         retention_job.start()
 
     @func_timer
-    async def save_exginfo(self, exginfo, symbols_trading, market):
+    async def save_exginfo(self, fetcher, market):
+        exginfo = await fetcher.get_exchange_info()
+        symbols_trading = TRADE_TYPE_MAP[market][0](exginfo)
         infos_trading = [info for sym, info in exginfo.items() if sym in symbols_trading]
         symbols_trading_df = pd.DataFrame.from_records(infos_trading)
         # 保存symbols_trading数据到数据库
         try:
             # 更新内存缓存
-            self.flight_gets._update_exginfo(market, symbols_trading_df)
+            self.flight_gets.update_exginfo(market, symbols_trading_df)
             # 删除旧数据并插入新数据
             self.db_manager.execute_write(f"DELETE FROM exginfo WHERE market = '{market}';")
             # 明确指定列名，排除created_time
@@ -297,13 +210,14 @@ class FlightServer(flight.FlightServerBase):
             logger.info(f"symbols_trading数据已保存到数据库: {market}, {len(symbols_trading_df)} 条记录")
         except Exception as e:
             logger.error(f"保存symbols_trading数据失败: {e}")
+        return symbols_trading
 
     @func_timer
     async def save_duck_time(self, market, current_time):
         """保存当前时间到config_dict表"""
         try:
             # 更新内存缓存
-            self.flight_actions.duck_time[market] = str(current_time)
+            self.flight_actions._duck_time[market] = str(current_time)
             self.db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
                                      (f'{market}_duck_time', str(current_time)))
             logger.info(f"已保存 {market} 的当前时间: {current_time}")
@@ -314,9 +228,8 @@ class FlightServer(flight.FlightServerBase):
         """异步获取K线并写入duckdb表"""
         async with create_aiohttp_session(10) as session:
             fetcher = BinanceFetcher(market, session)
-            exginfo = await fetcher.get_exchange_info()
-            symbols_trading = TRADE_TYPE_MAP[market][0](exginfo)
-            await self.save_exginfo(exginfo, symbols_trading, market)
+
+            symbols_trading = await self.save_exginfo(fetcher, market)
 
             optimized_fetcher = OptimizedKlineFetcher(fetcher, max_concurrent=concurrent)
             results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval)

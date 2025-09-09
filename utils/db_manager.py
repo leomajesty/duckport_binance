@@ -1,3 +1,4 @@
+import os
 import threading
 import duckdb
 from typing import Optional, Any, List, Dict
@@ -5,6 +6,7 @@ from typing import Optional, Any, List, Dict
 import pandas as pd
 import pyarrow as pa
 
+from utils.config import SUFFIX, KLINE_INTERVAL
 from utils.log_kit import logger
 
 dtypes_dict = {
@@ -18,7 +20,7 @@ class DatabaseManager:
     使用锁机制保证同一时间只有一个查询或写入操作
     """
     
-    def __init__(self, database_path: str = None, read_only: bool = False):
+    def __init__(self, database_path: str = None):
         """
         初始化数据库管理器
         
@@ -27,7 +29,6 @@ class DatabaseManager:
             read_only: 是否只读模式
         """
         self.database_path = database_path
-        self.read_only = read_only
         self._lock = threading.Lock()
         self._connection = None
         self._init_connection()
@@ -36,10 +37,10 @@ class DatabaseManager:
         """初始化数据库连接"""
         try:
             if self.database_path:
-                self._connection = duckdb.connect(database=self.database_path, read_only=self.read_only)
+                self._connection = duckdb.connect(database=self.database_path, read_only=False)
                 logger.info(f"数据库连接已建立: {self.database_path}")
             else:
-                self._connection = duckdb.connect(database=':memory:', read_only=self.read_only)
+                self._connection = duckdb.connect(database=':memory:', read_only=False)
                 logger.info("内存数据库连接已建立")
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
@@ -260,3 +261,109 @@ class DatabaseManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.close()
+
+class KlineDBManager(DatabaseManager):
+
+    def __init__(self, database_path: str = None, new: bool = False):
+        if new:
+            self.destroy_all()
+        super().__init__(database_path)
+        self._init_database()
+
+    def destroy_all(self):
+        if self.database_path and os.path.exists(self.database_path):
+            try:
+                os.remove(self.database_path)
+                logger.info(f"已删除数据库文件: {self.database_path}")
+            except Exception as e:
+                logger.error(f"删除数据库文件失败: {e}")
+                raise
+
+    def _init_database(self):
+        self.execute_write("""CREATE TABLE IF NOT EXISTS config_dict (
+            key VARCHAR,
+            value VARCHAR,
+            PRIMARY KEY (key)
+        );""")
+        self._verify_kline_interval_consistency()
+        self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_perp{SUFFIX} (
+            open_time TIMESTAMP,
+            symbol VARCHAR,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume DOUBLE,
+            quote_volume DOUBLE,
+            trade_num INT,
+            taker_buy_base_asset_volume DOUBLE,
+            taker_buy_quote_asset_volume DOUBLE,
+            avg_price DOUBLE,
+            PRIMARY KEY (open_time, symbol)
+        );""")
+
+        self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_spot{SUFFIX} (
+            open_time TIMESTAMP,
+            symbol VARCHAR,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume DOUBLE,
+            quote_volume DOUBLE,
+            trade_num INT,
+            taker_buy_base_asset_volume DOUBLE,
+            taker_buy_quote_asset_volume DOUBLE,
+            avg_price DOUBLE,
+            PRIMARY KEY (open_time, symbol)
+        );""")
+
+        self.execute_write("""CREATE TABLE IF NOT EXISTS exginfo (
+            market VARCHAR,
+            symbol VARCHAR,
+            status VARCHAR,
+            base_asset VARCHAR,
+            quote_asset VARCHAR,
+            price_tick VARCHAR,
+            lot_size VARCHAR,
+            min_notional_value VARCHAR,
+            contract_type VARCHAR,
+            margin_asset VARCHAR,
+            pre_market BOOLEAN,
+            created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (market, symbol)
+        );""")
+
+    def _verify_kline_interval_consistency(self):
+        """验证k线周期配置一致性"""
+        try:
+            # 向 config_dict 表写入当前配置
+            self.execute_write(
+                "INSERT INTO config_dict (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+                ('kline_interval', KLINE_INTERVAL)
+            )
+            # 从 config_dict 表读取已存储的配置
+            stored_value = self.fetch_one(
+                "SELECT value FROM config_dict WHERE key = 'kline_interval'"
+            )
+
+            if not stored_value:
+                logger.error("无法从数据库读取k线周期配置")
+                raise ValueError("数据库配置读取失败")
+
+            stored_interval = stored_value[0]
+
+            # 比较配置一致性
+            if stored_interval != KLINE_INTERVAL:
+                error_msg = f"k线周期配置不一致！配置文件: {KLINE_INTERVAL}, 数据库: {stored_interval}"
+                logger.error(error_msg)
+                logger.error("请检查配置文件或清理数据库后重新启动系统")
+                raise ValueError(error_msg)
+
+            logger.info("k线周期配置一致性验证通过")
+
+        except Exception as e:
+            logger.error(f"k线周期配置一致性验证失败: {e}")
+            logger.error("系统将退出，请检查配置后重新启动")
+            import sys
+            sys.exit(1)

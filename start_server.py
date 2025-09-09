@@ -8,7 +8,7 @@ import signal
 
 from flight.flight_server import FlightServer
 from utils.config import FLIGHT_PORT, DUCKDB_DIR, PARQUET_DIR
-from utils.db_manager import DatabaseManager
+from utils.db_manager import KlineDBManager
 from core.component.candle_fetcher import *
 
 # 设置时区为UTC
@@ -47,10 +47,10 @@ if __name__ == "__main__":
         global db_manager
         if duckdb_dir:
             logger.info(f"Using DuckDB directory: {duckdb_dir}")
-            db_manager = DatabaseManager(database_path=duckdb_dir, read_only=False)
+            db_manager = KlineDBManager(database_path=duckdb_dir)
         else:
             logger.info("Using in-memory DuckDB")
-            db_manager = DatabaseManager(database_path=None, read_only=False)
+            db_manager = KlineDBManager(database_path=None)
 
         server = FlightServer(location=location, db_manager=db_manager, pqt_path=pqt_dir)
         server.serve()

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import *
 import os
 import glob
@@ -6,16 +7,17 @@ from dateutil import parser
 import pyarrow as pa
 import pyarrow.flight as flight
 
-from utils.log_kit import logger
-from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES
+from utils import next_run_time, async_sleep_until_run_time
+from utils.log_kit import logger, divider
+from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL
 from utils.timer import timer
 from utils.db_manager import DatabaseManager
 
 
 class FlightActions:
     def __init__(self, db_manager: DatabaseManager):
-        self.db_manager = db_manager
-        self.duck_time = {
+        self._db_manager = db_manager
+        self._duck_time = {
             'usdt_perp': self._duck_time('usdt_perp'),
             'usdt_spot': self._duck_time('usdt_spot')
         }
@@ -24,7 +26,7 @@ class FlightActions:
         """更新Parquet文件的最新时间"""
         max_time = '2009-01-03 00:00:00'
         try:
-            result = self.db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
+            result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
             if abs(pd.to_datetime(result[0]) - datetime.now(tz=timezone.utc)) > timedelta(
                     minutes=KLINE_INTERVAL_MINUTES) * 495:
@@ -41,37 +43,37 @@ class FlightActions:
 
     def action_ready(self, market, **kwargs):
         """检查最新一次完成fetch的时间 如果没有 则返回pqt_time"""
-        duck_time = self.duck_time[market]
+        duck_time = self._duck_time[market]
         return [flight.Result(pa.scalar(duck_time).as_buffer())]
 
 
 class FlightGets:
 
     def __init__(self, db_manager: DatabaseManager, redundancy_hours: int = 1, pqt_path: str = "../data"):
-        self.db_manager = db_manager
-        self.redundancy_hours = redundancy_hours
-        self.pqt_path = pqt_path
-        self.pqt_time = {
+        self._db_manager = db_manager
+        self._redundancy_hours = redundancy_hours
+        self._pqt_path = pqt_path
+        self._pqt_time = {
             'usdt_perp': self._pqt_time('usdt_perp'),
             'usdt_spot': self._pqt_time('usdt_spot')
         }
 
-        self.exginfo = {}
+        self._exginfo = {}
         self._init_exginfo()
 
     def _pqt_time(self, market: str):
         """更新Parquet文件的最新时间"""
         max_time = pd.to_datetime('2009-01-03 00:00:00')
-        files = glob.glob(os.path.join(self.pqt_path, f"{market}{SUFFIX}", "*.parquet"))
+        files = glob.glob(os.path.join(self._pqt_path, f"{market}{SUFFIX}", "*.parquet"))
         if len(files) > 0:
             try:
-                result = self.db_manager.fetch_one(
-                    f"SELECT max(open_time) as max_time from read_parquet('{self.pqt_path}/{market}{SUFFIX}/*.parquet')")
+                result = self._db_manager.fetch_one(
+                    f"SELECT max(open_time) as max_time from read_parquet('{self._pqt_path}/{market}{SUFFIX}/*.parquet')")
                 max_time = pd.to_datetime(result[0])
             except Exception as e:
                 logger.warning(f"未找到{market}{SUFFIX} Parquet文件中的最大时间")
-            self.db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
-                                          (f'{market}{SUFFIX}_pqt_time', str(max_time)))
+            self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
+                                           (f'{market}{SUFFIX}_pqt_time', str(max_time)))
             logger.info(f"{market}{SUFFIX} Parquet时间已更新: {max_time}")
         else:
             logger.warning(f"未找到{market}{SUFFIX} Parquet文件")
@@ -79,7 +81,7 @@ class FlightGets:
 
     def _get_historical_threshold(self, market):
         """获取历史数据阈值时间"""
-        return self.pqt_time[market]
+        return self._pqt_time[market]
 
     def _determine_query_strategy(self, begin, end, market):
         """确定查询策略：纯历史、纯近期或混合查询"""
@@ -96,7 +98,7 @@ class FlightGets:
         """执行Parquet文件查询"""
         try:
             # 构建Parquet查询SQL
-            pqt_glob = f"{self.pqt_path}/{market}{SUFFIX}/{market}_*.parquet"
+            pqt_glob = f"{self._pqt_path}/{market}{SUFFIX}/{market}_*.parquet"
 
             # 基础查询
             base_query = f"""
@@ -163,10 +165,10 @@ class FlightGets:
             threshold = self._get_historical_threshold(market)
 
             # 计算扩展范围（添加冗余时间）
-            historical_begin = begin - timedelta(hours=self.redundancy_hours)
-            historical_end = min(end, threshold) + timedelta(hours=self.redundancy_hours)
-            recent_begin = max(begin, threshold) - timedelta(hours=self.redundancy_hours)
-            recent_end = end + timedelta(hours=self.redundancy_hours)
+            historical_begin = begin - timedelta(hours=self._redundancy_hours)
+            historical_end = min(end, threshold) + timedelta(hours=self._redundancy_hours)
+            recent_begin = max(begin, threshold) - timedelta(hours=self._redundancy_hours)
+            recent_end = end + timedelta(hours=self._redundancy_hours)
 
             logger.info(
                 f"扩展查询范围: 历史数据({historical_begin} - {historical_end}), 近期数据({recent_begin} - {recent_end})")
@@ -180,19 +182,12 @@ class FlightGets:
                 return self._execute_query("SELECT NULL LIMIT 0")
 
             # 构建先GROUP BY再UNION的SQL
-            parquet_path = f"{self.pqt_path}/{market}{SUFFIX}/{market}_*.parquet"
+            parquet_path = f"{self._pqt_path}/{market}{SUFFIX}/{market}_*.parquet"
 
-            base_query = f"""
-            SELECT resample_time, last(open) as open, last(high) as high, last(low) as low, last(close) as close,
-                   last(volume) as volume, last(quote_volume) as quote_volume, last(trade_num) as trade_num,
-                   last(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, last(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
-                   last(avg_price) as avg_price, symbol
-            FROM (
-                """
-
+            subquery = ""
             # 添加历史数据预聚合查询（如果有效）
             if has_historical:
-                base_query += f"""
+                subquery += f"""
                 -- 历史数据预聚合（Parquet）
                 SELECT 
                     DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
@@ -204,21 +199,21 @@ class FlightGets:
                 WHERE open_time >= '{historical_begin:%Y-%m-%d %H:%M:%S}' AND open_time < '{historical_end:%Y-%m-%d %H:%M:%S}'
                 """
                 if symbol:
-                    base_query += f" AND symbol = '{symbol}'"
-                base_query += f"""
+                    subquery += f" AND symbol = '{symbol}'"
+                subquery += f"""
                 GROUP BY symbol, resample_time
                 HAVING count(open_time) = {interval // KLINE_INTERVAL_MINUTES}
                 """
 
             # 添加UNION ALL（如果需要合并）
             if has_historical and has_recent:
-                base_query += f"""
+                subquery += f"""
                 UNION ALL
                 """
 
             # 添加近期数据预聚合查询（如果有效）
             if has_recent:
-                base_query += f"""
+                subquery += f"""
                 -- 近期数据预聚合（DuckDB）
                 SELECT 
                     DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
@@ -230,18 +225,21 @@ class FlightGets:
                 WHERE open_time >= '{recent_begin:%Y-%m-%d %H:%M:%S}' AND open_time <= '{recent_end:%Y-%m-%d %H:%M:%S}'
                 """
                 if symbol:
-                    base_query += f" AND symbol = '{symbol}'"
-                base_query += f"""
+                    subquery += f" AND symbol = '{symbol}'"
+                subquery += f"""
                 GROUP BY symbol, resample_time
                 HAVING count(open_time) = {interval // KLINE_INTERVAL_MINUTES}
                 """
 
-            base_query += f"""
-            ) pre_aggregated_data
-            GROUP BY symbol, resample_time
-            ORDER BY resample_time
-            """
-
+            base_query = f"""
+                        SELECT resample_time, last(open) as open, last(high) as high, last(low) as low, last(close) as close,
+                               last(volume) as volume, last(quote_volume) as quote_volume, last(trade_num) as trade_num,
+                               last(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, last(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
+                               last(avg_price) as avg_price, symbol
+                        FROM ( {subquery} ) pre_aggregated_data
+                        GROUP BY symbol, resample_time
+                        ORDER BY resample_time
+                            """
             logger.info(f"执行混合查询: {market}")
             return self._execute_query(base_query)
 
@@ -343,46 +341,98 @@ class FlightGets:
         """exginfo初始化"""
         try:
             # 从数据库加载exginfo数据到内存
-            df = self.db_manager.fetch_df("SELECT * FROM exginfo")
+            df = self._db_manager.fetch_df("SELECT * FROM exginfo")
 
             if not df.empty:
                 # 按market分组存储到内存
                 for market in df['market'].unique():
                     market_data = df[df['market'] == market]
-                    self.exginfo[market] = market_data
+                    self._exginfo[market] = market_data
                     logger.info(f"成功加载 {market} 的exginfo数据: {len(market_data)} 条记录")
             else:
                 logger.info("数据库中暂无exginfo数据")
 
         except Exception as e:
             logger.error(f"初始化exginfo失败: {e}")
-            self.exginfo = {}
+            self._exginfo = {}
 
     def get_exginfo(self, market, **kwargs):
         """获取exginfo数据"""
         if market not in ['usdt_perp', 'usdt_spot']:
             raise ValueError("Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'.")
 
-        if market not in self.exginfo:
+        if market not in self._exginfo:
             raise ValueError(f"No exginfo data found for market: {market}")
 
         # 返回exginfo数据
-        table = pa.Table.from_pandas(self.exginfo[market])
+        table = pa.Table.from_pandas(self._exginfo[market])
         return flight.RecordBatchStream(table)
 
-    def _update_exginfo(self, market, exginfo_df):
+    def update_exginfo(self, market, exginfo_df):
         """更新exginfo内存缓存"""
-        self.exginfo[market] = exginfo_df
+        self._exginfo[market] = exginfo_df
         logger.info(f"已更新 {market} 的exginfo内存缓存: {len(exginfo_df)} 条记录")
 
     def _execute_query(self, query: str):
         """执行SQL查询并返回Arrow数据，增强错误处理和类型转换"""
         try:
             with timer(f"执行查询:"):
-                table = self.db_manager.fetch_arrow_table(query)
+                table = self._db_manager.fetch_arrow_table(query)
             return flight.RecordBatchStream(table)
 
         except Exception as e:
             logger.error(f"查询执行错误: {e}")
             logger.error(f"问题查询: {query}")
             raise
+
+class DataJobs:
+    def __init__(self, db_manager: DatabaseManager, flight_actions: FlightActions, flight_gets: FlightGets):
+        self._flight_gets = flight_gets
+        self._flight_actions = flight_actions
+        self._db_manager: DatabaseManager = db_manager
+
+        self.init_history_data()
+
+
+    def init_history_data(self):
+        """初始化历史数据"""
+        pass
+
+    def update_recent_data(self):
+        """更新近期数据"""
+        pass
+
+    def duckdb_retention_policy(self):
+        """DuckDB数据保留策略"""
+        """定时导出parquet文件,并清理过期的duckdb数据"""
+        if RETENTION_DAYS == 0:
+            logger.info("Retention days is set to 0, skipping retention job.")
+            return
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def periodic():
+            while True:
+                next_time = next_run_time('1h') + timedelta(minutes=3)  # 每小时的5分执行
+                divider(f"[Scheduler] next retention job runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
+                await async_sleep_until_run_time(next_time)
+                try:
+                    await self._duckdb_retention_async()
+                except Exception as e:
+                    logger.error(f"Scheduler Error: {e}")
+
+        loop.run_until_complete(periodic())
+
+    async def _duckdb_retention_async(self):
+        """定时导出一小时前的数据到parquet，并清理n周前的parquet文件"""
+        logger.info("[Scheduler] Starting periodic cleanup task")
+
+        try:
+            # 清理过期的duckdb数据
+            self._db_manager.execute_write(
+                f"DELETE FROM usdt_perp_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
+            self._db_manager.execute_write(
+                f"DELETE FROM usdt_spot_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
+            logger.info("[Scheduler] Cleaned up old DuckDB data")
+        except Exception as e:
+            logger.error(f"Error during DuckDB cleanup: {e}")
