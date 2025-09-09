@@ -392,6 +392,7 @@ class DataJobs:
         self._db_manager: DatabaseManager = db_manager
 
         self.init_history_data()
+        self.update_recent_data()
 
 
     def init_history_data(self):

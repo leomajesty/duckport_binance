@@ -156,7 +156,6 @@ class DatabaseManager:
                 else:
                     result = self._connection.execute(query)
                 table = result.fetch_arrow_table()
-                print(f'{table.nbytes /1024} kb')
                 for col, dtype in dtypes_dict.items():
                     if col in table.column_names and table.schema.field(col).type != dtype:
                         table = table.set_column(
@@ -164,7 +163,6 @@ class DatabaseManager:
                             col,
                             table[col].cast(dtype)
                         )
-                print(f'{table.nbytes / 1024} kb')
                 return table
             except Exception as e:
                 logger.error(f"Arrow表查询失败: {e}")

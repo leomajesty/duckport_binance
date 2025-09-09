@@ -9,7 +9,7 @@ import threading
 
 from core.bus import *
 from core.component.candle_fetcher import BinanceFetcher, OptimizedKlineFetcher
-from core.flight_func.flight_api import FlightActions, FlightGets
+from core.flight_func.flight_api import FlightActions, FlightGets, DataJobs
 from utils.log_kit import logger
 from utils.config import REDUNDANCY_HOURS, SUFFIX, FETCH_CONCURRENCY, KLINE_INTERVAL, RETENTION_DAYS
 from utils import create_aiohttp_session, next_run_time, async_sleep_until_run_time
@@ -37,7 +37,7 @@ class FlightServer(flight.FlightServerBase):
         self.flight_gets = FlightGets(self.db_manager, self.redundancy_hours, pqt_path)
         self.flight_actions = FlightActions(self.db_manager)
 
-        self.async_job()
+        self.data_jobs = DataJobs(self.db_manager, self.flight_actions, self.flight_gets)
 
         logger.info(f"Flight server initialized at {self._location}")
         logger.info(f"Redundancy hours: {self.redundancy_hours} hours")
@@ -183,12 +183,12 @@ class FlightServer(flight.FlightServerBase):
         """列出支持的操作"""
         return [flight.ActionType(action, action) for action in dir(FlightActions) if action.startswith('action_')]
 
-    def async_job(self):
-        # 启动定时任务线程
-        fetch_job = threading.Thread(target=self.start_periodic_fetch_job, daemon=True)
-        fetch_job.start()
-        retention_job = threading.Thread(target=self.start_retention_job, daemon=True)
-        retention_job.start()
+    # def async_job(self):
+    #     # 启动定时任务线程
+    #     fetch_job = threading.Thread(target=self.start_periodic_fetch_job, daemon=True)
+    #     fetch_job.start()
+    #     retention_job = threading.Thread(target=self.start_retention_job, daemon=True)
+    #     retention_job.start()
 
     @func_timer
     async def save_exginfo(self, fetcher, market):
@@ -302,7 +302,7 @@ class FlightServer(flight.FlightServerBase):
 
 def main():
     """启动Flight服务器"""
-    db_manager = DatabaseManager(database_path=None, read_only=False)
+    db_manager = DatabaseManager(database_path=None)
     server = FlightServer(db_manager)
     
     # 启动服务器
