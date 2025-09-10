@@ -6,18 +6,23 @@ import pandas as pd
 from dateutil import parser
 import pyarrow as pa
 import pyarrow.flight as flight
+import sys
 
 from utils import next_run_time, async_sleep_until_run_time
 from utils.log_kit import logger, divider
 from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL
-from utils.timer import timer
 from utils.db_manager import DatabaseManager
+from core.component.candle_fetcher import BinanceFetcher, OptimizedKlineFetcher
+from utils import create_aiohttp_session
+from utils.config import FETCH_CONCURRENCY
+from core.bus import TRADE_TYPE_MAP
+from utils.timer import timer
 
 
 class FlightActions:
     def __init__(self, db_manager: DatabaseManager):
         self._db_manager = db_manager
-        self._duck_time = {
+        self.duck_time = {
             'usdt_perp': self._duck_time('usdt_perp'),
             'usdt_spot': self._duck_time('usdt_spot')
         }
@@ -43,7 +48,7 @@ class FlightActions:
 
     def action_ready(self, market, **kwargs):
         """检查最新一次完成fetch的时间 如果没有 则返回pqt_time"""
-        duck_time = self._duck_time[market]
+        duck_time = self.duck_time[market]
         return [flight.Result(pa.scalar(duck_time).as_buffer())]
 
 
@@ -58,7 +63,7 @@ class FlightGets:
             'usdt_spot': self._pqt_time('usdt_spot')
         }
 
-        self._exginfo = {}
+        self.exginfo = {}
         self._init_exginfo()
 
     def _pqt_time(self, market: str):
@@ -347,30 +352,30 @@ class FlightGets:
                 # 按market分组存储到内存
                 for market in df['market'].unique():
                     market_data = df[df['market'] == market]
-                    self._exginfo[market] = market_data
+                    self.exginfo[market] = market_data
                     logger.info(f"成功加载 {market} 的exginfo数据: {len(market_data)} 条记录")
             else:
                 logger.info("数据库中暂无exginfo数据")
 
         except Exception as e:
             logger.error(f"初始化exginfo失败: {e}")
-            self._exginfo = {}
+            self.exginfo = {}
 
     def get_exginfo(self, market, **kwargs):
         """获取exginfo数据"""
         if market not in ['usdt_perp', 'usdt_spot']:
             raise ValueError("Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'.")
 
-        if market not in self._exginfo:
+        if market not in self.exginfo:
             raise ValueError(f"No exginfo data found for market: {market}")
 
         # 返回exginfo数据
-        table = pa.Table.from_pandas(self._exginfo[market])
+        table = pa.Table.from_pandas(self.exginfo[market])
         return flight.RecordBatchStream(table)
 
     def update_exginfo(self, market, exginfo_df):
         """更新exginfo内存缓存"""
-        self._exginfo[market] = exginfo_df
+        self.exginfo[market] = exginfo_df
         logger.info(f"已更新 {market} 的exginfo内存缓存: {len(exginfo_df)} 条记录")
 
     def _execute_query(self, query: str):
@@ -397,7 +402,168 @@ class DataJobs:
 
     def init_history_data(self):
         """初始化历史数据"""
-        pass
+        logger.info("开始初始化历史数据")
+        
+        # 第一步：获取最新数据时间
+        latest_times = self._get_latest_data_time()
+        
+        # 第二步：检查币种一致性
+        for market in ['usdt_perp', 'usdt_spot']:
+            if latest_times[market]:
+                self._check_symbol_consistency(market, latest_times[market])
+        
+        # 第三步：更新历史K线数据
+        for market in ['usdt_perp', 'usdt_spot']:
+            if latest_times[market]:
+                self._update_historical_klines(market, latest_times[market])
+        
+        logger.info("历史数据初始化完成")
+
+    def _get_latest_data_time(self):
+        """获取最新数据时间，优先ducktime，其次pqttime"""
+        latest_times = {}
+        
+        for market in ['usdt_perp', 'usdt_spot']:
+            try:
+                # 尝试获取ducktime
+                duck_time = self._flight_actions.duck_time[market]
+                if duck_time and duck_time != '2009-01-03 00:00:00':
+                    latest_times[market] = pd.to_datetime(duck_time)
+                    logger.info(f"{market} 使用ducktime: {latest_times[market]}")
+                else:
+                    # 如果没有ducktime，使用pqttime
+                    pqt_time = self._flight_gets._pqt_time[market]
+                    if pqt_time and pqt_time != pd.to_datetime('2009-01-03 00:00:00'):
+                        latest_times[market] = pqt_time
+                        logger.info(f"{market} 使用pqttime: {latest_times[market]}")
+                    else:
+                        latest_times[market] = None
+                        logger.warning(f"{market} 未找到有效的数据时间")
+            except Exception as e:
+                logger.error(f"获取{market}数据时间失败: {e}")
+                latest_times[market] = None
+        
+        return latest_times
+
+    def _check_symbol_consistency(self, market, latest_time):
+        """检查币种一致性，如果有币种下架则退出程序"""
+        try:
+            # 查询指定时间点的所有币种
+            query = f"""
+            SELECT DISTINCT symbol 
+            FROM {market}{SUFFIX} 
+            WHERE open_time = '{latest_time:%Y-%m-%d %H:%M:%S}'
+            """
+            historical_symbols = set()
+            try:
+                result = self._db_manager.fetch_all(query)
+                historical_symbols = {row[0] for row in result}
+                logger.info(f"{market} 历史数据中的币种数量: {len(historical_symbols)}")
+            except Exception as e:
+                logger.warning(f"查询{market}历史币种失败: {e}")
+                return
+            
+            # 获取当前exginfo中的币种
+            try:
+                if market in self._flight_gets.exginfo:
+                    current_symbols = set(self._flight_gets.exginfo[market]['symbol'].tolist())
+                    logger.info(f"{market} 当前exginfo中的币种数量: {len(current_symbols)}")
+                else:
+                    logger.warning(f"{market} 未找到exginfo数据")
+                    return
+            except Exception as e:
+                logger.error(f"获取{market} exginfo失败: {e}")
+                return
+            
+            # 检查是否有币种下架
+            delisted_symbols = historical_symbols - current_symbols
+            if delisted_symbols:
+                logger.error(f"{market} 发现下架币种: {delisted_symbols}")
+                logger.error("检测到币种下架，需要重新执行loadhist脚本")
+                logger.error("程序将退出，请执行: python loadhist.py")
+                sys.exit(1)
+            else:
+                logger.info(f"{market} 币种一致性检查通过")
+                
+        except Exception as e:
+            logger.error(f"检查{market}币种一致性失败: {e}")
+
+    def _update_historical_klines(self, market, start_time):
+        """更新历史K线数据"""
+        try:
+            logger.info(f"开始更新{market}历史K线数据，起始时间: {start_time}")
+            
+            # 获取当前时间
+            current_time = datetime.now(tz=timezone.utc)
+            
+            # 创建异步事件循环来调用现有的异步方法
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                # 调用现有的异步更新方法
+                loop.run_until_complete(self._fetch_and_insert_binance_data_async(
+                    market, current_time, interval=KLINE_INTERVAL
+                ))
+                logger.info(f"{market} 历史K线数据更新完成")
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"更新{market}历史K线数据失败: {e}")
+
+    async def _fetch_and_insert_binance_data_async(self, market, current_time, interval='5m'):
+        """异步获取K线并写入duckdb表（从flight_server.py复制的方法）"""
+        
+        async with create_aiohttp_session(10) as session:
+            fetcher = BinanceFetcher(market, session)
+            
+            # 获取交易所信息
+            exginfo = await fetcher.get_exchange_info()
+            symbols_trading = TRADE_TYPE_MAP[market][0](exginfo)
+            infos_trading = [info for sym, info in exginfo.items() if sym in symbols_trading]
+            symbols_trading_df = pd.DataFrame.from_records(infos_trading)
+            
+            # 更新exginfo内存缓存
+            self._flight_gets.update_exginfo(market, symbols_trading_df)
+            
+            # 保存到数据库
+            try:
+                self._db_manager.execute_write(f"DELETE FROM exginfo WHERE market = '{market}';")
+                columns = ['market', 'symbol', 'status', 'base_asset', 'quote_asset', 'price_tick', 'lot_size',
+                          'min_notional_value', 'contract_type', 'margin_asset', 'pre_market']
+                self._db_manager.execute_write(f"INSERT INTO exginfo ({', '.join(columns)}) SELECT {', '.join(columns)} FROM df;",
+                                         df=symbols_trading_df)
+                logger.info(f"symbols_trading数据已保存到数据库: {market}, {len(symbols_trading_df)} 条记录")
+            except Exception as e:
+                logger.error(f"保存symbols_trading数据失败: {e}")
+            
+            # 获取K线数据
+            optimized_fetcher = OptimizedKlineFetcher(fetcher, max_concurrent=FETCH_CONCURRENCY)
+            results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval)
+            
+            # 过滤掉失败的结果
+            successful_results = [pd.DataFrame(r['data']) for r in results if r.get('success', False)]
+            if not successful_results:
+                logger.info("没有成功的结果，无法保存")
+                return
+            
+            df = pd.concat(successful_results)
+            df = df[df['open_time'] < current_time]
+            
+            with timer("write to duckdb"):
+                # 写入数据库忽略重复数据
+                self._db_manager.execute_write(f"insert into {market}_{interval} select * from df on conflict do nothing;",
+                                         df=df)
+            
+            # 保存当前时间到config_dict表
+            try:
+                self._flight_actions.duck_time[market] = str(current_time)
+                self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
+                                         (f'{market}_duck_time', str(current_time)))
+                logger.info(f"已保存 {market} 的当前时间: {current_time}")
+            except Exception as e:
+                logger.error(f"保存 {market} 当前时间失败: {e}")
 
     def update_recent_data(self):
         """更新近期数据"""

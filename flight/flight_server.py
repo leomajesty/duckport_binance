@@ -217,7 +217,7 @@ class FlightServer(flight.FlightServerBase):
         """保存当前时间到config_dict表"""
         try:
             # 更新内存缓存
-            self.flight_actions._duck_time[market] = str(current_time)
+            self.flight_actions.duck_time[market] = str(current_time)
             self.db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
                                      (f'{market}_duck_time', str(current_time)))
             logger.info(f"已保存 {market} 的当前时间: {current_time}")

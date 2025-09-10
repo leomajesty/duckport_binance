@@ -9,8 +9,8 @@ from utils.log_kit import logger
 class FlightClient:
     """Flight客户端，用于连接和查询Flight服务器"""
     
-    def __init__(self, host: str = "localhost", port: int = 8815):
-        self.location = f"grpc://{host}:{port}"
+    def __init__(self, addr: str = "localhost:8815"):
+        self.location = f"grpc://{addr}"
         self.client = flight.FlightClient(self.location)
         logger.info(f"连接到Flight服务器: {self.location}")
     
