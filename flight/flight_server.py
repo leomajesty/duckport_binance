@@ -26,7 +26,7 @@ class FlightServer(flight.FlightServerBase):
     支持数据查询、传输和元数据管理
     """
     
-    def __init__(self, db_manager: DatabaseManager, location: str = "grpc://0.0.0.0:8815", pqt_path: str = "../data"):
+    def __init__(self, db_manager: DatabaseManager, location: str = "grpc://0.0.0.0:8815", pqt_path: str = "../data/pqt"):
         super().__init__(location)
         self.db_manager = db_manager
         self._location = location

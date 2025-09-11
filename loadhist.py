@@ -163,6 +163,6 @@ def run(interval='5m'):
 if __name__ == "__main__":
     divider('loading history data')
 
-    # run(KLINE_INTERVAL)
+    run(KLINE_INTERVAL)
 
     cleaning()

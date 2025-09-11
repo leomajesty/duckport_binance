@@ -91,7 +91,7 @@ def async_get_usdt_symbols(params):
 def spot_symbols_filter(symbols):
     """Filter spot symbols to remove stable coins and special pairs"""
     others = []
-    stable_symbol = ['BKRW', 'USDC', 'USDP', 'TUSD', 'BUSD', 'FDUSD', 'DAI', 'EUR', 'GBP']
+    stable_symbol = ['BKRW', 'USDC', 'USDP', 'TUSD', 'BUSD', 'FDUSD', 'DAI', 'EUR', 'GBP', 'AEUR']
     # stable_symbols：稳定币交易对
     stable_symbols = [s + 'USDT' for s in stable_symbol]
     # special_symbols：容易误判的特殊交易对

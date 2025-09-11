@@ -127,11 +127,16 @@ class BinanceFetcher:
             results[info['symbol']] = self.syminfo_parse_func(info)
         return results
 
-    async def get_candle(self, symbol, interval, **kwargs) -> pd.DataFrame:
+    async def get_candle(self, symbol, interval, end_timestamp=None, **kwargs) -> pd.DataFrame:
         '''
         Parse return values of /klines API and convert to pd.DataFrame
         '''
-        data = await async_retry_getter(self.market_api.aioreq_klines, symbol=symbol, interval=interval, limit=499, **kwargs)
+        if end_timestamp:
+            data = await async_retry_getter(self.market_api.aioreq_klines, symbol=symbol, interval=interval,
+                                            limit=499, endTime=end_timestamp, **kwargs)
+        else:
+            data = await async_retry_getter(self.market_api.aioreq_klines, symbol=symbol, interval=interval,
+                                            limit=499, **kwargs)
         columns = [
             'open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_volume', 'trade_num',
             'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
@@ -212,7 +217,7 @@ class OptimizedKlineFetcher:
         self.weight_manager = WeightManager(*fetcher.get_api_limits())
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def get_klines_with_retry(self, symbol: str, interval: str = '1m', max_retries: int = 3) -> Dict[str, Any]:
+    async def get_klines_with_retry(self, symbol: str, interval: str = '1m', max_retries: int = 3, end_timestamp = None) -> Dict[str, Any]:
         """带重试机制的K线获取"""
         for attempt in range(max_retries):
             try:
@@ -224,7 +229,7 @@ class OptimizedKlineFetcher:
 
                     # 发起请求
                     self.weight_manager.add_weight()
-                    data = await self.fetcher.get_candle(symbol, interval)
+                    data = await self.fetcher.get_candle(symbol, interval, end_timestamp)
 
                     return {
                         'symbol': symbol,
@@ -247,14 +252,14 @@ class OptimizedKlineFetcher:
 
         return {'symbol': symbol, 'success': False, 'error': 'Max retries exceeded'}
 
-    async def get_all_klines(self, symbols: List[str], interval: str = '1m') -> List[Dict[str, Any]]:
+    async def get_all_klines(self, symbols: List[str], interval: str = '1m', end_timestamp = None) -> List[Dict[str, Any]]:
         """并发获取所有币种的K线数据"""
         logger.info(f"start fetching {len(symbols)} symbols...")
 
         start_time = time.time()
 
         # 创建所有任务
-        tasks = [self.get_klines_with_retry(symbol, interval) for symbol in symbols]
+        tasks = [self.get_klines_with_retry(symbol, interval, end_timestamp) for symbol in symbols]
 
         # 使用tqdm显示进度
         results = []

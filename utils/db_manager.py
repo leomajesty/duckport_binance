@@ -7,7 +7,7 @@ import pandas as pd
 import pyarrow as pa
 
 from utils.config import SUFFIX, KLINE_INTERVAL
-from utils.log_kit import logger
+from utils.log_kit import logger, divider
 
 dtypes_dict = {
     'trade_num': pa.int32(),
@@ -38,10 +38,10 @@ class DatabaseManager:
         try:
             if self.database_path:
                 self._connection = duckdb.connect(database=self.database_path, read_only=False)
-                logger.info(f"数据库连接已建立: {self.database_path}")
+                logger.info(f"Using DuckDB directory: {self.database_path}")
             else:
                 self._connection = duckdb.connect(database=':memory:', read_only=False)
-                logger.info("内存数据库连接已建立")
+                logger.info("Using in-memory DuckDB")
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
             raise
@@ -267,6 +267,7 @@ class KlineDBManager(DatabaseManager):
             self.destroy_all()
         super().__init__(database_path)
         self._init_database()
+        divider("数据库已启动")
 
     def destroy_all(self):
         if self.database_path and os.path.exists(self.database_path):

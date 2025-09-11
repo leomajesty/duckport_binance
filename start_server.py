@@ -46,10 +46,8 @@ if __name__ == "__main__":
         # 创建数据库管理器
         global db_manager
         if duckdb_dir:
-            logger.info(f"Using DuckDB directory: {duckdb_dir}")
             db_manager = KlineDBManager(database_path=duckdb_dir)
         else:
-            logger.info("Using in-memory DuckDB")
             db_manager = KlineDBManager(database_path=None)
 
         server = FlightServer(location=location, db_manager=db_manager, pqt_path=pqt_dir)

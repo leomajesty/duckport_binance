@@ -54,11 +54,11 @@ class FlightActions:
 
 class FlightGets:
 
-    def __init__(self, db_manager: DatabaseManager, redundancy_hours: int = 1, pqt_path: str = "../data"):
+    def __init__(self, db_manager: DatabaseManager, redundancy_hours: int = 1, pqt_path: str = "../data/pqt"):
         self._db_manager = db_manager
         self._redundancy_hours = redundancy_hours
         self._pqt_path = pqt_path
-        self._pqt_time = {
+        self.pqt_time = {
             'usdt_perp': self._pqt_time('usdt_perp'),
             'usdt_spot': self._pqt_time('usdt_spot')
         }
@@ -72,9 +72,8 @@ class FlightGets:
         files = glob.glob(os.path.join(self._pqt_path, f"{market}{SUFFIX}", "*.parquet"))
         if len(files) > 0:
             try:
-                result = self._db_manager.fetch_one(
-                    f"SELECT max(open_time) as max_time from read_parquet('{self._pqt_path}/{market}{SUFFIX}/*.parquet')")
-                max_time = pd.to_datetime(result[0])
+                sql = f"SELECT max(open_time) as max_time from read_parquet('{self._pqt_path}/{market}{SUFFIX}/*.parquet')"
+                max_time = self._db_manager.fetch_one(sql)[0]
             except Exception as e:
                 logger.warning(f"未找到{market}{SUFFIX} Parquet文件中的最大时间")
             self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
@@ -86,7 +85,7 @@ class FlightGets:
 
     def _get_historical_threshold(self, market):
         """获取历史数据阈值时间"""
-        return self._pqt_time[market]
+        return self.pqt_time[market]
 
     def _determine_query_strategy(self, begin, end, market):
         """确定查询策略：纯历史、纯近期或混合查询"""
@@ -399,29 +398,35 @@ class DataJobs:
         self.init_history_data()
         self.update_recent_data()
 
-
     def init_history_data(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         """初始化历史数据"""
         logger.info("开始初始化历史数据")
-        
-        # 第一步：获取最新数据时间
-        latest_times = self._get_latest_data_time()
-        
-        # 第二步：检查币种一致性
-        for market in ['usdt_perp', 'usdt_spot']:
-            if latest_times[market]:
-                self._check_symbol_consistency(market, latest_times[market])
-        
-        # 第三步：更新历史K线数据
-        for market in ['usdt_perp', 'usdt_spot']:
-            if latest_times[market]:
-                self._update_historical_klines(market, latest_times[market])
-        
+
+        async def history_data():
+            # 第一步：获取最新数据时间
+            latest_times, latest_symbols = self._get_latest_data_time()
+            async with create_aiohttp_session(10) as session:
+                fetchers = {}
+                for market in ['usdt_perp', 'usdt_spot']:
+                    fetchers[market] = BinanceFetcher(market, session)
+
+                    if latest_times[market]:
+                        await self._check_symbol_consistency(market, latest_symbols[market], fetchers[market])
+
+                # 第三步：更新历史K线数据
+                for market in ['usdt_perp', 'usdt_spot']:
+                    if latest_times[market]:
+                        await self._update_historical_klines(market, latest_times[market], fetchers[market])
+
+        loop.run_until_complete(history_data())
         logger.info("历史数据初始化完成")
 
     def _get_latest_data_time(self):
         """获取最新数据时间，优先ducktime，其次pqttime"""
         latest_times = {}
+        latest_symbols = {}
         
         for market in ['usdt_perp', 'usdt_spot']:
             try:
@@ -429,12 +434,14 @@ class DataJobs:
                 duck_time = self._flight_actions.duck_time[market]
                 if duck_time and duck_time != '2009-01-03 00:00:00':
                     latest_times[market] = pd.to_datetime(duck_time)
+                    latest_symbols[market] = self.get_trading_symbols_by_time(duck_time, market, is_duck=True)
                     logger.info(f"{market} 使用ducktime: {latest_times[market]}")
                 else:
                     # 如果没有ducktime，使用pqttime
-                    pqt_time = self._flight_gets._pqt_time[market]
+                    pqt_time = self._flight_gets.pqt_time[market]
                     if pqt_time and pqt_time != pd.to_datetime('2009-01-03 00:00:00'):
-                        latest_times[market] = pqt_time
+                        latest_times[market] = pd.to_datetime(pqt_time)
+                        latest_symbols[market] = self.get_trading_symbols_by_time(pqt_time, market, is_duck=False)
                         logger.info(f"{market} 使用pqttime: {latest_times[market]}")
                     else:
                         latest_times[market] = None
@@ -443,40 +450,25 @@ class DataJobs:
                 logger.error(f"获取{market}数据时间失败: {e}")
                 latest_times[market] = None
         
-        return latest_times
+        return latest_times, latest_symbols
 
-    def _check_symbol_consistency(self, market, latest_time):
+    def get_trading_symbols_by_time(self, snaptime, market, is_duck=True):
+        if is_duck:
+            df = self._db_manager.fetch_df(f"select symbol from {market}{SUFFIX} where open_time = '{snaptime}'")
+            return df['symbol'].to_list()
+        else:
+            df = self._db_manager.fetch_df(f"SELECT symbol from read_parquet('{self._flight_gets._pqt_path}/{market}{SUFFIX}/*.parquet') where open_time = '{snaptime}'")
+            return df['symbol'].to_list()
+
+    @staticmethod
+    async def _check_symbol_consistency(market, historical_symbols: set, fetcher: BinanceFetcher):
         """检查币种一致性，如果有币种下架则退出程序"""
         try:
-            # 查询指定时间点的所有币种
-            query = f"""
-            SELECT DISTINCT symbol 
-            FROM {market}{SUFFIX} 
-            WHERE open_time = '{latest_time:%Y-%m-%d %H:%M:%S}'
-            """
-            historical_symbols = set()
-            try:
-                result = self._db_manager.fetch_all(query)
-                historical_symbols = {row[0] for row in result}
-                logger.info(f"{market} 历史数据中的币种数量: {len(historical_symbols)}")
-            except Exception as e:
-                logger.warning(f"查询{market}历史币种失败: {e}")
-                return
-            
-            # 获取当前exginfo中的币种
-            try:
-                if market in self._flight_gets.exginfo:
-                    current_symbols = set(self._flight_gets.exginfo[market]['symbol'].tolist())
-                    logger.info(f"{market} 当前exginfo中的币种数量: {len(current_symbols)}")
-                else:
-                    logger.warning(f"{market} 未找到exginfo数据")
-                    return
-            except Exception as e:
-                logger.error(f"获取{market} exginfo失败: {e}")
-                return
-            
+            exginfo = await fetcher.get_exchange_info()
+            current_symbols = TRADE_TYPE_MAP[market][0](exginfo)
+
             # 检查是否有币种下架
-            delisted_symbols = historical_symbols - current_symbols
+            delisted_symbols = set(historical_symbols) - set(current_symbols)
             if delisted_symbols:
                 logger.error(f"{market} 发现下架币种: {delisted_symbols}")
                 logger.error("检测到币种下架，需要重新执行loadhist脚本")
@@ -484,33 +476,13 @@ class DataJobs:
                 sys.exit(1)
             else:
                 logger.info(f"{market} 币种一致性检查通过")
-                
+
         except Exception as e:
             logger.error(f"检查{market}币种一致性失败: {e}")
 
-    def _update_historical_klines(self, market, start_time):
+    async def _update_historical_klines(self, market, start_time):
         """更新历史K线数据"""
-        try:
-            logger.info(f"开始更新{market}历史K线数据，起始时间: {start_time}")
-            
-            # 获取当前时间
-            current_time = datetime.now(tz=timezone.utc)
-            
-            # 创建异步事件循环来调用现有的异步方法
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                # 调用现有的异步更新方法
-                loop.run_until_complete(self._fetch_and_insert_binance_data_async(
-                    market, current_time, interval=KLINE_INTERVAL
-                ))
-                logger.info(f"{market} 历史K线数据更新完成")
-            finally:
-                loop.close()
-                
-        except Exception as e:
-            logger.error(f"更新{market}历史K线数据失败: {e}")
+
 
     async def _fetch_and_insert_binance_data_async(self, market, current_time, interval='5m'):
         """异步获取K线并写入duckdb表（从flight_server.py复制的方法）"""
@@ -603,3 +575,4 @@ class DataJobs:
             logger.info("[Scheduler] Cleaned up old DuckDB data")
         except Exception as e:
             logger.error(f"Error during DuckDB cleanup: {e}")
+
