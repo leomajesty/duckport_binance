@@ -7,7 +7,7 @@ import os
 import signal
 
 from flight.flight_server import FlightServer
-from utils.config import FLIGHT_PORT, DUCKDB_DIR, PARQUET_DIR
+from utils.config import FLIGHT_PORT, DUCKDB_DIR, PARQUET_DIR, ENABLE_WS
 from utils.db_manager import KlineDBManager
 from core.component.candle_fetcher import *
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         else:
             db_manager = KlineDBManager(database_path=None)
 
-        server = FlightServer(location=location, db_manager=db_manager, pqt_path=pqt_dir)
+        server = FlightServer(location=location, db_manager=db_manager, pqt_path=pqt_dir, ws_mode=ENABLE_WS)
         server.serve()
         
     except KeyboardInterrupt:

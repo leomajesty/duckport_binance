@@ -1,21 +1,15 @@
-import asyncio
-from datetime import timedelta
 import json
 import os
-import pandas as pd
+
 import pyarrow as pa
 import pyarrow.flight as flight
-import threading
 
-from core.bus import *
-from core.component.candle_fetcher import BinanceFetcher, OptimizedKlineFetcher
-from core.flight_func.flight_api import FlightActions, FlightGets, DataJobs
+from core.flight_func.flight_api import FlightActions, FlightGets
+from core.flight_func.flight_data_jobs import DataJobs, WebsocketsDataJobs, RestfulDataJobs
+from utils.config import REDUNDANCY_HOURS
+from utils.db_manager import DatabaseManager, KlineDBManager
 from utils.log_kit import logger
-from utils.config import REDUNDANCY_HOURS, SUFFIX, FETCH_CONCURRENCY, KLINE_INTERVAL, RETENTION_DAYS
-from utils import create_aiohttp_session, next_run_time, async_sleep_until_run_time
-from utils.timer import func_timer, timer
-from utils.db_manager import DatabaseManager
-from utils.log_kit import divider
+from utils.timer import func_timer
 
 # 设置时区为UTC
 os.environ['TZ'] = 'UTC'
@@ -26,7 +20,7 @@ class FlightServer(flight.FlightServerBase):
     支持数据查询、传输和元数据管理
     """
     
-    def __init__(self, db_manager: DatabaseManager, location: str = "grpc://0.0.0.0:8815", pqt_path: str = "../data/pqt"):
+    def __init__(self, db_manager: KlineDBManager, location: str = "grpc://0.0.0.0:8815", pqt_path: str = "../data/pqt", ws_mode: bool = True):
         super().__init__(location)
         self.db_manager = db_manager
         self._location = location
@@ -37,7 +31,10 @@ class FlightServer(flight.FlightServerBase):
         self.flight_gets = FlightGets(self.db_manager, self.redundancy_hours, pqt_path)
         self.flight_actions = FlightActions(self.db_manager)
 
-        self.data_jobs = DataJobs(self.db_manager, self.flight_actions, self.flight_gets)
+        if ws_mode:
+            self.data_jobs = WebsocketsDataJobs(self.db_manager, self.flight_actions, self.flight_gets)
+        else:
+            self.data_jobs = RestfulDataJobs(self.db_manager, self.flight_actions, self.flight_gets)
 
         logger.info(f"Flight server initialized at {self._location}")
         logger.info(f"Redundancy hours: {self.redundancy_hours} hours")

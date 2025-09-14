@@ -276,17 +276,15 @@ class OptimizedKlineFetcher:
                 t = self.get_klines_with_retry(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
                 tasks.append(t)
 
-            # 使用tqdm显示进度
-            with tqdm(total=len(tasks)) as pbar:
-                for coro in asyncio.as_completed(tasks):
-                    result = await coro
-                    results.append(result)
-                    pbar.update(1)
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
+                results.append(result)
 
-                    # 更新进度条描述
-                    success_count = sum(1 for r in results if r.get('success', False))
-                    pbar.set_description(f"Success: {success_count}/{len(results)}")
-
+                # 更新进度条描述
+                count = sum(1 for _ in results)
+                if count % 100 == 0:
+                    logger.debug(f'[Restful] {self.fetcher.trade_type} - process {count} / {len(fetch_symbols)}')
+            logger.ok(f'[Restful] {self.fetcher.trade_type} - process done. total: {len(fetch_symbols)}')
             # 统计结果
             failed = [r for r in results if not r.get('success', False)]
 

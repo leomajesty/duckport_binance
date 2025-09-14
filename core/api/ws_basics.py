@@ -80,15 +80,12 @@ class ReconnectingWebsocket:
             if proxy_parsed.scheme == 'http':
                 # HTTP代理
                 kwargs['proxy'] = self._proxy
-                self._log.debug(f"Using HTTP proxy: {self._proxy}")
             elif proxy_parsed.scheme == 'https':
                 # HTTPS代理
                 kwargs['proxy'] = self._proxy
-                self._log.debug(f"Using HTTPS proxy: {self._proxy}")
             elif proxy_parsed.scheme == 'socks5':
                 # SOCKS5代理
                 kwargs['proxy'] = self._proxy
-                self._log.debug(f"Using SOCKS5 proxy: {self._proxy}")
             else:
                 self._log.warning(f"Unsupported proxy scheme: {proxy_parsed.scheme}, proxy will be ignored")
 

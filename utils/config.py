@@ -6,7 +6,9 @@ Contains all configuration parameters and constants
 import os
 import platform
 import asyncio
-import datetime
+from datetime import datetime, timezone
+
+import pandas as pd
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -97,11 +99,14 @@ thunder = True
 blind = False
 
 # Convert START_MONTH to START_DATE if specified
-START_MONTH = os.getenv("START_MONTH", None)  # Format: "YYYY-MM"
-if START_MONTH:
-    START_DATE = datetime.datetime.strptime(START_MONTH + "-01", "%Y-%m-%d").date()
+GENESIS_TIME = pd.to_datetime('2009-01-03 00:00:00').tz_localize(tz=timezone.utc)
+START_DATE = os.getenv("START_DATE", None)  # Format: "YYYY-MM-DD"
+START_MONTH = None
+if START_DATE:
+    START_MONTH = START_DATE[:7]
+    START_DATE = datetime.strptime(START_DATE, "%Y-%m-%d").date()
 else:
-    START_DATE = datetime.datetime(2009, 1, 3).date()  # Default start date
+    START_DATE = datetime(2009, 1, 3).date()  # Default start date
 
 # Global sets for tracking
 need_analyse_set = set()
@@ -111,3 +116,4 @@ daily_updated_set = set()
 FLIGHT_PORT = os.getenv("FLIGHT_PORT", "8815")
 REDUNDANCY_HOURS = int(os.getenv('REDUNDANCY_HOURS', 1))
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 0))
+ENABLE_WS = os.getenv("ENABLE_WS", "false").lower() == "true"

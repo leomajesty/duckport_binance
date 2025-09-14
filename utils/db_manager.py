@@ -103,7 +103,7 @@ class DatabaseManager:
         执行事务操作（线程安全）
         
         Args:
-            queries: 查询列表，每个查询包含 'query' 和 'params' 键
+            queries: 查询列表，每个查询包含 'query'、'params' 和可选的 'df' 键
             
         Returns:
             事务是否成功
@@ -116,10 +116,12 @@ class DatabaseManager:
                 for query_info in queries:
                     query = query_info['query']
                     params = query_info.get('params')
+                    df = query_info.get('df')
                     
                     if params:
                         self._connection.execute(query, params)
                     else:
+                        # 都没有的情况
                         self._connection.execute(query)
                 
                 # 提交事务

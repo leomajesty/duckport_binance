@@ -7,7 +7,7 @@ import pyarrow as pa
 import pyarrow.flight as flight
 from dateutil import parser
 
-from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES
+from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, GENESIS_TIME
 from utils.db_manager import DatabaseManager
 from utils.log_kit import logger
 from utils.timer import timer
@@ -23,7 +23,7 @@ class FlightActions:
 
     def _duck_time(self, market: str):
         """更新Parquet文件的最新时间"""
-        max_time = '2009-01-03 00:00:00'
+        max_time = GENESIS_TIME
         try:
             result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
@@ -31,10 +31,11 @@ class FlightActions:
                     minutes=KLINE_INTERVAL_MINUTES) * 495:
                 logger.warning(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
                 raise ValueError(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
-            max_time = result[0]
+            max_time = pd.to_datetime(result[0]).tz_localize(tz=timezone.utc)
+            logger.info(f"{market}{SUFFIX} Ducktime已加载: {max_time}")
         except Exception as e:
             logger.warning(f"未找到{market} duck_time")
-        return pd.to_datetime(max_time).tz_localize(tz=timezone.utc)
+        return max_time
 
     def action_ping(self, **kwargs):
         """Ping操作"""
@@ -62,7 +63,7 @@ class FlightGets:
 
     def _pqt_time(self, market: str):
         """更新Parquet文件的最新时间"""
-        max_time = pd.to_datetime('2009-01-03 00:00:00')
+        max_time = GENESIS_TIME
         files = glob.glob(os.path.join(self._pqt_path, f"{market}{SUFFIX}", "*.parquet"))
         if len(files) > 0:
             try:
@@ -75,7 +76,7 @@ class FlightGets:
             logger.info(f"{market}{SUFFIX} Parquet时间已更新: {max_time}")
         else:
             logger.warning(f"未找到{market}{SUFFIX} Parquet文件")
-        return pd.to_datetime(max_time).tz_localize(tz=timezone.utc)
+        return max_time
 
     def _get_historical_threshold(self, market):
         """获取历史数据阈值时间"""
@@ -256,13 +257,13 @@ class FlightGets:
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
             raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
         if begin is None:
-            datetime.now() - timedelta(days=90)
+            begin = datetime.now(tz=timezone.utc) - timedelta(days=90)
         elif isinstance(begin, str):
-            begin = parser.parse(begin)
+            begin = pd.to_datetime(begin).tz_localize(tz=timezone.utc)
         if end is None:
-            end = datetime.now()
+            end = datetime.now(tz=timezone.utc)
         elif isinstance(end, str):
-            end = parser.parse(end)
+            end = pd.to_datetime(end).tz_localize(tz=timezone.utc)
 
         # 确定查询策略
         strategy = self._determine_query_strategy(begin, end, market)
@@ -287,13 +288,13 @@ class FlightGets:
     def get_funding(self, begin=None, end=None, **kwargs):
         """获取资金费率信息"""
         if begin is None:
-            begin = datetime.now() - timedelta(days=90)
+            begin = datetime.now(tz=timezone.utc) - timedelta(days=90)
         elif isinstance(begin, str):
-            begin = parser.parse(begin)
+            begin = pd.to_datetime(begin).tz_localize(tz=timezone.utc)
         if end is None:
-            end = datetime.now()
+            end = datetime.now(tz=timezone.utc)
         elif isinstance(end, str):
-            end = parser.parse(end)
+            end = pd.to_datetime(end).tz_localize(tz=timezone.utc)
         pass
 
     def get_symbol(self, market, symbol, interval, offset,
@@ -307,14 +308,16 @@ class FlightGets:
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
             raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
         if begin is None:
-            begin = datetime.now() - timedelta(days=90)
+            begin = datetime.now(tz=timezone.utc) - timedelta(days=90)
         elif isinstance(begin, str):
-            begin = parser.parse(begin)
+            begin = pd.to_datetime(begin).tz_localize(tz=timezone.utc)
         if end is None:
-            end = datetime.now()
+            end = datetime.now(tz=timezone.utc)
         elif isinstance(end, str):
-            end = parser.parse(end)
+            end = pd.to_datetime(end).tz_localize(tz=timezone.utc)
 
+        print(begin)
+        print(end)
         # 确定查询策略
         strategy = self._determine_query_strategy(begin, end, market)
         logger.info(f"Symbol查询策略: {strategy}, 时间范围: {begin} - {end}, Symbol: {symbol}")

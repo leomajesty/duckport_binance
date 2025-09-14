@@ -8,26 +8,27 @@ import sys
 from core.flight_func.flight_api import FlightActions, FlightGets
 from utils import next_run_time, async_sleep_until_run_time
 from utils.log_kit import logger, divider
-from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL, START_DATE
-from utils.db_manager import DatabaseManager
+from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL, START_DATE, GENESIS_TIME
+from utils.db_manager import KlineDBManager
 from core.component.candle_fetcher import BinanceFetcher, OptimizedKlineFetcher
+from core.component.candle_listener import MarketListener
 from utils import create_aiohttp_session
 from utils.config import FETCH_CONCURRENCY
 from core.bus import TRADE_TYPE_MAP
 from utils.timer import timer, func_timer
 
 class DataJobs:
-    def __init__(self, db_manager: DatabaseManager, flight_actions: FlightActions, flight_gets: FlightGets):
+    def __init__(self, db_manager: KlineDBManager, flight_actions: FlightActions, flight_gets: FlightGets):
         self._flight_gets = flight_gets
         self._flight_actions = flight_actions
-        self._db_manager: DatabaseManager = db_manager
+        self._db_manager: KlineDBManager = db_manager
 
-        self.init_history_data()
+        # self.init_history_data()
         self.update_recent_data()
 
     def init_history_data(self):
         """初始化历史数据"""
-        logger.info("开始初始化历史数据")
+        logger.info(f"开始初始化历史数据, 数据起始时间为: {START_DATE}")
         current_symbols = {}
 
         async def history_data():
@@ -62,11 +63,11 @@ class DataJobs:
                 # 尝试获取ducktime
                 duck_time = self._flight_actions.duck_time[market]
                 pqt_time = self._flight_gets.pqt_time[market]
-                if duck_time and duck_time != pd.to_datetime('2009-01-03 00:00:00').tz_localize(tz=timezone.utc):
+                if duck_time and duck_time != GENESIS_TIME:
                     latest_times[market] = duck_time
                     latest_symbols[market] = self.get_trading_symbols_by_time(duck_time, market, is_duck=True)
                     logger.info(f"{market} 使用ducktime: {latest_times[market]}")
-                elif pqt_time and pqt_time != pd.to_datetime('2009-01-03 00:00:00').tz_localize(tz=timezone.utc):
+                elif pqt_time and pqt_time != GENESIS_TIME:
                     latest_times[market] = pqt_time
                     latest_symbols[market] = self.get_trading_symbols_by_time(pqt_time, market, is_duck=False)
                     logger.info(f"{market} 使用pqttime: {latest_times[market]}")
@@ -95,18 +96,20 @@ class DataJobs:
     async def _check_symbol_consistency(market, current_symbols: set, historical_symbols: set):
         """检查币种一致性，如果有币种下架则退出程序"""
         try:
-            # 检查是否有币种下架
-            delisted_symbols = set(historical_symbols) - set(current_symbols)
-            if delisted_symbols:
-                logger.error(f"{market} 发现下架币种: {delisted_symbols}")
-                logger.error("检测到币种下架，需要重新执行loadhist脚本")
-                logger.error("程序将退出，请执行: python loadhist.py")
-                sys.exit(1)
+            if historical_symbols:
+                # 检查是否有币种下架
+                delisted_symbols = set(historical_symbols) - set(current_symbols)
+                if delisted_symbols:
+                    logger.error(f"{market} 发现下架币种: {delisted_symbols}")
+                    logger.error("检测到币种下架，需要重新执行loadhist脚本")
+                    logger.error("程序将退出，请执行: python loadhist.py")
+                    sys.exit(1)
+                else:
+                    logger.info(f"{market} 一致性检查通过")
             else:
-                logger.info(f"{market} 币种一致性检查通过")
-
+                logger.info(f"{market} 无历史数据，跳过一致性检查")
         except Exception as e:
-            logger.error(f"检查{market}币种一致性失败: {e}")
+            logger.error(f"检查{market}一致性失败: {e}")
 
     async def _update_historical_klines(self, fetcher, symbols, start_time, market, current_time):
         """更新历史K线数据"""
@@ -145,20 +148,28 @@ class DataJobs:
 
     def write_kline(self, df, market, current_time):
         with timer("write to duckdb"):
-            # 写入数据库忽略重复数据
-            self._db_manager.execute_write(
-                f"insert into {market}_{KLINE_INTERVAL} select * from df on conflict do nothing;",
-                df=df)
-
-        # 保存当前时间到config_dict表
-        try:
-            print(current_time)
-            self._flight_actions.duck_time[market] = pd.to_datetime(current_time)
-            self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
-                                           (f'{market}_duck_time', current_time.strftime("%Y-%m-%d %H:%M:%S")))
-            logger.info(f"已保存 {market} 的当前时间: {current_time}")
-        except Exception as e:
-            logger.error(f"保存 {market} 当前时间失败: {e}")
+            # 使用事务确保数据插入和时间更新的原子性
+            queries = [
+                {
+                    'query': f"insert into {market}_{KLINE_INTERVAL} select * from df on conflict do nothing;",
+                    'df': df
+                },
+                {
+                    'query': "INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
+                    'params': (f'{market}_duck_time', current_time.strftime("%Y-%m-%d %H:%M:%S"))
+                }
+            ]
+            
+            # 执行事务
+            success = self._db_manager.execute_transaction(queries)
+            
+            if success:
+                # 更新内存中的duck_time
+                self._flight_actions.duck_time[market] = pd.to_datetime(current_time)
+                logger.info(f"已保存 {market} 的K线数据和当前时间: {current_time}")
+            else:
+                logger.error(f"保存 {market} K线数据和时间失败，事务已回滚")
+                raise Exception(f"保存 {market} K线数据和时间失败")
 
     @abc.abstractmethod
     def update_recent_data(self):
@@ -197,24 +208,6 @@ class DataJobs:
         except Exception as e:
             logger.error(f"Error during DuckDB cleanup: {e}")
 
-class RestfulDataJobs(DataJobs):
-    def __init__(self, db_manager: DatabaseManager, flight_actions: FlightActions, flight_gets: FlightGets):
-        super().__init__(db_manager, flight_actions, flight_gets)
-
-    def update_recent_data(self):
-        """更新近期数据"""
-        threading.Thread(target=self.duckdb_retention_policy, daemon=True).start()
-        threading.Thread(target=self.duckdb_periodic_fetch_policy, daemon=True).start()
-
-    def duckdb_periodic_fetch_policy(self):
-        """DuckDB数据更新"""
-
-        async def periodic():
-            while True:
-                await self._duckdb_periodic_fetch_async()
-
-        asyncio.run(periodic())
-
     async def _duckdb_periodic_fetch_async(self):
         next_time = next_run_time(KLINE_INTERVAL)
         divider(f"[Scheduler] next fetch runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
@@ -235,8 +228,15 @@ class RestfulDataJobs(DataJobs):
             symbols_trading = await self.save_exginfo(fetcher, market)
             # 获取K线数据
             optimized_fetcher = OptimizedKlineFetcher(fetcher, max_concurrent=FETCH_CONCURRENCY)
-            results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval, limit=99)
-
+            gap_time = current_time - self._flight_actions.duck_time[market]
+            print(self._flight_actions.duck_time[market])
+            if gap_time <= timedelta(minutes=KLINE_INTERVAL_MINUTES*99):
+                results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval, limit=99)
+            elif gap_time <= timedelta(minutes=KLINE_INTERVAL_MINUTES*499) or self._flight_actions.duck_time[market] == GENESIS_TIME:
+                results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval, limit=499)
+            else:
+                logger.error("It has been a long time since last ducktime! please restart")
+                return
             # 过滤掉失败的结果
             successful_results = [r['data'] for r in results if r.get('success', False)]
             if not successful_results:
@@ -247,9 +247,111 @@ class RestfulDataJobs(DataJobs):
             df = df[df['open_time'] < current_time]
             self.write_kline(df, market, current_time)
 
-class WebsocketsDataJobs(DataJobs):
-    def __init__(self, db_manager: DatabaseManager, flight_actions: FlightActions, flight_gets: FlightGets):
+class RestfulDataJobs(DataJobs):
+    def __init__(self, db_manager: KlineDBManager, flight_actions: FlightActions, flight_gets: FlightGets):
+        logger.info('Using Restful API for DataJobs')
         super().__init__(db_manager, flight_actions, flight_gets)
 
     def update_recent_data(self):
+        """更新近期数据"""
         threading.Thread(target=self.duckdb_retention_policy, daemon=True).start()
+        threading.Thread(target=self.duckdb_periodic_fetch_policy, daemon=True).start()
+
+    def duckdb_periodic_fetch_policy(self):
+        """DuckDB数据更新"""
+
+        async def periodic():
+            while True:
+                await self._duckdb_periodic_fetch_async()
+
+        asyncio.run(periodic())
+
+class WebsocketsDataJobs(DataJobs):
+    def __init__(self, db_manager: KlineDBManager, flight_actions: FlightActions, flight_gets: FlightGets):
+        logger.warning('Using Websockets for DataJobs [Beta]')
+        super().__init__(db_manager, flight_actions, flight_gets)
+        self._perp_listener = None
+        self._spot_listener = None
+
+    def update_recent_data(self):
+        """更新近期数据"""
+        threading.Thread(target=self.duckdb_retention_policy, daemon=True).start()
+        threading.Thread(target=self._run_websocket_data_collection, daemon=True).start()
+
+    async def _start_market_listener(self, market):
+        """启动单个市场的MarketListener"""
+        try:
+            logger.info(f"启动 {market} 市场的WebSocket监听器")
+
+            # 定义数据处理回调函数
+            async def data_callback(run_time: datetime, batch_data: dict, _market: str):
+                """处理批次数据的回调函数"""
+                if run_time - self._flight_actions.duck_time[_market] > timedelta(minutes=KLINE_INTERVAL_MINUTES):
+                    logger.warning(f'do remedy. [{market}] runtime: {run_time}, ducktime: {self._flight_actions.duck_time[_market]}')
+                    await self._fetch_and_insert_binance_data_async(market=_market, current_time=run_time,
+                                                                    interval=KLINE_INTERVAL)
+                    return
+                market_df = []
+                for symbol, kline_data in batch_data.items():
+                    # 转换数据格式
+                    converted_df = self._convert_market_data(kline_data, _market)
+                    market_df.append(converted_df)
+                market_df = pd.concat(market_df)
+                if market_df is not None:
+                    self.write_kline(market_df, market, run_time)
+                    logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {run_time}")
+
+            # 创建MarketListener实例，传入回调函数
+            listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback)
+
+            # 启动监听器
+            await listener.build_and_run()
+            
+        except Exception as e:
+            logger.error(f"启动 {market} 市场监听器失败: {e}")
+
+    def _run_websocket_data_collection(self):
+        """运行WebSocket数据收集"""
+        async def run_async():
+            try:
+                # 创建两个市场的监听任务
+                perp_task = asyncio.create_task(self._start_market_listener('usdt_perp'))
+                spot_task = asyncio.create_task(self._start_market_listener('usdt_spot'))
+                
+                # 等待任务完成（实际上会一直运行）
+                await asyncio.gather(perp_task, spot_task)
+            except Exception as e:
+                logger.error(f"WebSocket数据收集失败: {e}")
+        
+        # 在新的事件循环中运行
+        asyncio.run(run_async())
+
+    @staticmethod
+    def _convert_market_data(kline_data, market):
+        """将MarketListener的数据转换为与write_kline兼容的格式"""
+        try:
+            df_candle = kline_data['data']
+            symbol = kline_data['symbol']
+            run_time = kline_data['run_time']
+
+            # 构建与现有write_kline方法兼容的DataFrame
+            converted_data = {
+                'open_time': [run_time],
+                'symbol': [symbol],
+                'open': [float(df_candle['open'].iloc[0])],
+                'high': [float(df_candle['high'].iloc[0])],
+                'low': [float(df_candle['low'].iloc[0])],
+                'close': [float(df_candle['close'].iloc[0])],
+                'volume': [float(df_candle['volume'].iloc[0])],
+                'quote_volume': [float(df_candle['quote_volume'].iloc[0])],
+                'trade_num': [int(df_candle['trade_num'].iloc[0])],
+                'taker_buy_base_asset_volume': [float(df_candle['taker_buy_base_asset_volume'].iloc[0])],
+                'taker_buy_quote_asset_volume': [float(df_candle['taker_buy_quote_asset_volume'].iloc[0])],
+                'avg_price': [float(df_candle['quote_volume'].iloc[0]) / float(df_candle['volume'].iloc[0]) if float(
+                    df_candle['volume'].iloc[0]) > 0 else 0.0]
+            }
+
+            return pd.DataFrame(converted_data)
+        except Exception as e:
+            logger.error(f"转换市场数据失败: {e}, market: {market}, symbol: {kline_data.get('symbol', 'unknown')}")
+            return None
