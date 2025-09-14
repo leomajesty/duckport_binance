@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from core.api.binance_market_restful import create_binance_market_api
 from utils import async_retry_getter
-from utils.log_kit import logger
+from utils.log_kit import logger, divider
 
 
 def _check_from_permission_sets(permission_sets, permission_name):
@@ -127,16 +127,16 @@ class BinanceFetcher:
             results[info['symbol']] = self.syminfo_parse_func(info)
         return results
 
-    async def get_candle(self, symbol, interval, end_timestamp=None, **kwargs) -> pd.DataFrame:
+    async def get_candle(self, symbol, interval, limit=499, end_timestamp=None, **kwargs) -> pd.DataFrame:
         '''
         Parse return values of /klines API and convert to pd.DataFrame
         '''
         if end_timestamp:
             data = await async_retry_getter(self.market_api.aioreq_klines, symbol=symbol, interval=interval,
-                                            limit=499, endTime=end_timestamp, **kwargs)
+                                            limit=limit, endTime=end_timestamp, **kwargs)
         else:
             data = await async_retry_getter(self.market_api.aioreq_klines, symbol=symbol, interval=interval,
-                                            limit=499, **kwargs)
+                                            limit=limit, **kwargs)
         columns = [
             'open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_volume', 'trade_num',
             'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
@@ -217,7 +217,7 @@ class OptimizedKlineFetcher:
         self.weight_manager = WeightManager(*fetcher.get_api_limits())
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def get_klines_with_retry(self, symbol: str, interval: str = '1m', max_retries: int = 3, end_timestamp = None) -> Dict[str, Any]:
+    async def get_klines_with_retry(self, symbol: str, interval: str = '1m', limit=499, end_timestamp = None, max_retries: int = 3) -> Dict[str, Any]:
         """带重试机制的K线获取"""
         for attempt in range(max_retries):
             try:
@@ -225,15 +225,18 @@ class OptimizedKlineFetcher:
                     # 等待权重可用
                     wait_time = self.weight_manager.get_wait_time()
                     if wait_time > 0:
+                        logger.warning(f'等待{wait_time}秒权重恢复')
                         await asyncio.sleep(wait_time)
 
                     # 发起请求
                     self.weight_manager.add_weight()
-                    data = await self.fetcher.get_candle(symbol, interval, end_timestamp)
+                    data = await self.fetcher.get_candle(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
 
                     return {
                         'symbol': symbol,
                         'data': data,
+                        'num': data.shape[0],
+                        'begin_time': data['open_time'].min(),
                         'success': True,
                         'attempt': attempt + 1
                     }
@@ -252,42 +255,58 @@ class OptimizedKlineFetcher:
 
         return {'symbol': symbol, 'success': False, 'error': 'Max retries exceeded'}
 
-    async def get_all_klines(self, symbols: List[str], interval: str = '1m', end_timestamp = None) -> List[Dict[str, Any]]:
+    async def get_all_klines(self, symbols: List[str], interval: str = '1m', start_time = None, limit = 499) -> List[Dict[str, Any]]:
         """并发获取所有币种的K线数据"""
         logger.info(f"start fetching {len(symbols)} symbols...")
 
-        start_time = time.time()
-
-        # 创建所有任务
-        tasks = [self.get_klines_with_retry(symbol, interval, end_timestamp) for symbol in symbols]
-
-        # 使用tqdm显示进度
+        interval_delta = pd.Timedelta(interval)
+        fetch_symbols = symbols.copy()
         results = []
-        with tqdm(total=len(tasks)) as pbar:
-            for coro in asyncio.as_completed(tasks):
-                result = await coro
-                results.append(result)
-                pbar.update(1)
+        last_begin_time = dict()
+        num = 0
+        while fetch_symbols:
+            num += 1
+            if start_time:
+                divider(f"Fetch historical klines, round{num}")
+            tasks = []
+            for symbol in fetch_symbols:
+                end_timestamp = None
+                if symbol in last_begin_time:
+                    end_timestamp = (last_begin_time[symbol] - interval_delta).value // 1000000
+                t = self.get_klines_with_retry(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
+                tasks.append(t)
 
-                # 更新进度条描述
-                success_count = sum(1 for r in results if r.get('success', False))
-                pbar.set_description(f"Success: {success_count}/{len(results)}")
+            # 使用tqdm显示进度
+            with tqdm(total=len(tasks)) as pbar:
+                for coro in asyncio.as_completed(tasks):
+                    result = await coro
+                    results.append(result)
+                    pbar.update(1)
 
-        end_time = time.time()
+                    # 更新进度条描述
+                    success_count = sum(1 for r in results if r.get('success', False))
+                    pbar.set_description(f"Success: {success_count}/{len(results)}")
 
-        # 统计结果
-        failed = [r for r in results if not r.get('success', False)]
+            # 统计结果
+            failed = [r for r in results if not r.get('success', False)]
 
-        if len(failed) == 0:
-            logger.ok(f"{len(symbols)} symbols fetched in {end_time - start_time:.2f} seconds")
-        else:
-            logger.critical(f"{len(symbols)} symbols fetched with {len(failed)} failures in {end_time - start_time:.2f} seconds")
-
-        if failed:
-            logger.warning("\nFailed Symbols:")
-            for f in failed[:10]:  # 只显示前10个
-                logger.warning(f"  {f['symbol']}: {f.get('error', 'Unknown error')}")
-            if len(failed) > 10:
-                logger.critical(f"  ... and {len(failed) - 10} more failures")
+            if failed:
+                logger.warning("\nFailed Symbols:")
+                for f in failed[:10]:  # 只显示前10个
+                    logger.warning(f"  {f['symbol']}: {f.get('error', 'Unknown error')}")
+                if len(failed) > 10:
+                    logger.critical(f"  ... and {len(failed) - 10} more failures")
+            else:
+                succeed = [r for r in results if r.get('success', False)]
+                if start_time:
+                    for s in succeed:
+                        con1 = s.get('begin_time') > start_time
+                        con2 = s.get('num') == limit
+                        if con1 and con2:
+                            last_begin_time[s.get('symbol')] = s.get('begin_time')
+                        elif s.get('symbol') in fetch_symbols:
+                            fetch_symbols.remove(s.get('symbol'))
+                else:
+                    [fetch_symbols.remove(s.get('symbol')) for s in succeed]
 
         return results
