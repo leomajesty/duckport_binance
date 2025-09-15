@@ -114,7 +114,7 @@ class DataJobs:
     async def _update_historical_klines(self, fetcher, symbols, start_time, market, current_time):
         """更新历史K线数据"""
         optimized_fetcher = OptimizedKlineFetcher(fetcher, max_concurrent=FETCH_CONCURRENCY)
-        res = await optimized_fetcher.get_all_klines(symbols, start_time=start_time, interval='5m',
+        res = await optimized_fetcher.get_all_klines(symbols, start_time=start_time, interval=KLINE_INTERVAL,
                                                      limit=499)
         df = pd.concat([i['data'] for i in res])
         df.sort_values(by=['open_time'], inplace=True)
