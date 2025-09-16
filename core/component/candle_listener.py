@@ -21,7 +21,7 @@ def convert_to_dataframe(x, interval_delta):
     解析 WS 返回的数据字典，返回 DataFrame
     """
     columns = [
-        'candle_begin_time', 'open', 'high', 'low', 'close', 'volume', 'quote_volume', 'trade_num',
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'quote_volume', 'trade_num',
         'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume'
     ]
     candle_data = [

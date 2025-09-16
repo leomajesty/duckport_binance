@@ -332,11 +332,10 @@ class WebsocketsDataJobs(DataJobs):
         try:
             df_candle = kline_data['data']
             symbol = kline_data['symbol']
-            run_time = kline_data['run_time']
 
             # 构建与现有write_kline方法兼容的DataFrame
             converted_data = {
-                'open_time': [run_time],
+                'open_time': [df_candle['open_time'].iloc[0]],
                 'symbol': [symbol],
                 'open': [float(df_candle['open'].iloc[0])],
                 'high': [float(df_candle['high'].iloc[0])],
