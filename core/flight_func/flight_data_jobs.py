@@ -102,8 +102,8 @@ class DataJobs:
                 if delisted_symbols:
                     logger.error(f"{market} 发现下架币种: {delisted_symbols}")
                     logger.error("检测到币种下架，需要重新执行loadhist脚本")
-                    logger.error("程序将退出，请执行: python loadhist.py")
-                    sys.exit(1)
+                    # logger.error("程序将退出，请执行: python loadhist.py")
+                    # sys.exit(1)
                 else:
                     logger.info(f"{market} 一致性检查通过")
             else:
@@ -302,7 +302,7 @@ class WebsocketsDataJobs(DataJobs):
                     logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {run_time}")
 
             # 创建MarketListener实例，传入回调函数
-            listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback)
+            listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback, exginfo_callback=self.save_exginfo)
 
             # 启动监听器
             await listener.build_and_run()

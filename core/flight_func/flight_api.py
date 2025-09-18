@@ -25,13 +25,13 @@ class FlightActions:
         """更新Parquet文件的最新时间"""
         max_time = GENESIS_TIME
         try:
-            result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")
+            result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")[0]
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
-            if abs(pd.to_datetime(result[0]).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)) > timedelta(
+            if abs(pd.to_datetime(result).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)) > timedelta(
                     minutes=KLINE_INTERVAL_MINUTES) * 495:
                 logger.warning(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
                 raise ValueError(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
-            max_time = pd.to_datetime(result[0]).tz_localize(tz=timezone.utc)
+            max_time = pd.to_datetime(result).tz_localize(tz=timezone.utc)
             logger.info(f"{market}{SUFFIX} Ducktime已加载: {max_time}")
         except Exception as e:
             logger.warning(f"未找到{market} duck_time")
@@ -68,7 +68,8 @@ class FlightGets:
         if len(files) > 0:
             try:
                 sql = f"SELECT max(open_time) as max_time from read_parquet('{self._pqt_path}/{market}{SUFFIX}/*.parquet')"
-                max_time = self._db_manager.fetch_one(sql)[0]
+                result = self._db_manager.fetch_one(sql)[0]
+                max_time = pd.to_datetime(result).tz_localize(tz=timezone.utc)
             except Exception as e:
                 logger.warning(f"未找到{market}{SUFFIX} Parquet文件中的最大时间")
             self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",

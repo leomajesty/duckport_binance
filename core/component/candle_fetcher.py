@@ -5,7 +5,6 @@ from decimal import Decimal
 from typing import List, Dict, Any
 
 import pandas as pd
-from tqdm import tqdm
 
 from core.api.binance_market_restful import create_binance_market_api
 from utils import async_retry_getter

@@ -14,3 +14,4 @@ numpy~=2.0.2
 joblib~=1.4.2
 pytz~=2024.2
 colorama~=0.4.6
+websockets>=15.0.1

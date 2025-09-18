@@ -2,7 +2,8 @@ import asyncio
 
 import aiohttp
 
-from .log_kit import get_logger
+from core.api.exceptions import BinanceAPIException
+from .log_kit import logger
 
 
 async def async_retry_getter(func, max_times=5, **kwargs):
@@ -11,10 +12,12 @@ async def async_retry_getter(func, max_times=5, **kwargs):
         try:
             return await func(**kwargs)
         except Exception as e:
+            # if isinstance(e, BinanceAPIException) and e.code == -1003:
+            #     raise e
             if max_times == 0:
                 raise e
             else:
-                get_logger().warning(f'{e.__class__.__name__} occurred, %s, %d times retry left', str(e), max_times)
+                logger.warning(f'{e.__class__.__name__} occurred, %s, %d times retry left', str(e), max_times)
 
             await asyncio.sleep(sleep_seconds)
             max_times -= 1

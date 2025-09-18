@@ -142,7 +142,7 @@ class CandleListener:
 
 class MarketListener:
 
-    def __init__(self, market='usdt_perp', db_manager: KlineDBManager = None, data_callback=None):
+    def __init__(self, market='usdt_perp', db_manager: KlineDBManager = None, data_callback=None, exginfo_callback=None):
         self.main_queue = asyncio.Queue()
         self.market = market
         self.listeners = {}
@@ -154,6 +154,7 @@ class MarketListener:
         self._batch_status = {}  # {run_time: {'collected_symbols': set(), 'total_symbols': int}}
         # 数据处理回调函数
         self.data_callback = data_callback
+        self.exginfo_callback = exginfo_callback
 
     async def build_and_run(self):
         # 初始化symbols
@@ -276,21 +277,23 @@ class MarketListener:
             next_time = next_run_time(KLINE_INTERVAL)
             divider(f"[{self.market} Listener] next fetch runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
             await async_sleep_until_run_time(next_time)
+            symbols_trading = await self.get_exginfo()
             await asyncio.sleep(10)  # 避免紧邻时间点，导致多次执行
-            await self.update_exginfo()
+            await self.update_exginfo(symbols_trading)
             await asyncio.sleep(1)  # 避免紧邻时间点，导致多次执行
 
     async def get_exginfo(self):
         async with create_aiohttp_session(10) as session:
             fetcher = BinanceFetcher(self.market, session)
-            exginfo = await fetcher.get_exchange_info()
-            symbols_trading = TRADE_TYPE_MAP[self.market][0](exginfo)
-            # TODO 更新缓存，更新数据库
+            if self.exginfo_callback:
+                symbols_trading = await self.exginfo_callback(fetcher, self.market)
+            else:
+                exginfo = await fetcher.get_exchange_info()
+                symbols_trading = TRADE_TYPE_MAP[self.market][0](exginfo)
         logger.info(f'Fetched {len(symbols_trading)} trading symbols from exchange info')
         return symbols_trading
 
-    async def update_exginfo(self):
-        symbols_trading = await self.get_exginfo()
+    async def update_exginfo(self, symbols_trading):
         # 更新ws订阅
         delist = self.symbols - set(symbols_trading)
         onboard = set(symbols_trading) - self.symbols
