@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import gc
 import threading
 from datetime import *
 import pandas as pd
@@ -280,35 +281,38 @@ class WebsocketsDataJobs(DataJobs):
 
     async def _start_market_listener(self, market):
         """启动单个市场的MarketListener"""
-        try:
-            logger.info(f"启动 {market} 市场的WebSocket监听器")
+        while True:
+            try:
+                logger.info(f"启动 {market} 市场的WebSocket监听器")
 
-            # 定义数据处理回调函数
-            async def data_callback(run_time: datetime, batch_data: dict, _market: str):
-                """处理批次数据的回调函数"""
-                if run_time - self._flight_actions.duck_time[_market] > timedelta(minutes=KLINE_INTERVAL_MINUTES):
-                    logger.warning(f'do remedy. [{market}] runtime: {run_time}, ducktime: {self._flight_actions.duck_time[_market]}')
-                    await self._fetch_and_insert_binance_data_async(market=_market, current_time=run_time,
-                                                                    interval=KLINE_INTERVAL)
-                    return
-                market_df = []
-                for symbol, kline_data in batch_data.items():
-                    # 转换数据格式
-                    converted_df = self._convert_market_data(kline_data, _market)
-                    market_df.append(converted_df)
-                market_df = pd.concat(market_df)
-                if market_df is not None:
-                    self.write_kline(market_df, market, run_time)
-                    logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {run_time}")
+                # 定义数据处理回调函数
+                async def data_callback(run_time: datetime, batch_data: dict, _market: str):
+                    """处理批次数据的回调函数"""
+                    if run_time - self._flight_actions.duck_time[_market] > timedelta(minutes=KLINE_INTERVAL_MINUTES):
+                        logger.warning(f'do remedy. [{market}] runtime: {run_time}, ducktime: {self._flight_actions.duck_time[_market]}')
+                        await self._fetch_and_insert_binance_data_async(market=_market, current_time=run_time,
+                                                                        interval=KLINE_INTERVAL)
+                        return
+                    market_df = []
+                    for symbol, kline_data in batch_data.items():
+                        # 转换数据格式
+                        converted_df = self._convert_market_data(kline_data, _market)
+                        market_df.append(converted_df)
+                    market_df = pd.concat(market_df)
+                    if market_df is not None:
+                        self.write_kline(market_df, market, run_time)
+                        logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {run_time}")
 
-            # 创建MarketListener实例，传入回调函数
-            listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback, exginfo_callback=self.save_exginfo)
+                # 创建MarketListener实例，传入回调函数
+                listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback, exginfo_callback=self.save_exginfo)
 
-            # 启动监听器
-            await listener.build_and_run()
-            
-        except Exception as e:
-            logger.error(f"启动 {market} 市场监听器失败: {e}")
+                # 启动监听器
+                await listener.build_and_run()
+
+            except Exception as e:
+                logger.error(f"{market} 市场监听器异常: {e}, 20秒后重试")
+                gc.collect()
+                await asyncio.sleep(20)
 
     def _run_websocket_data_collection(self):
         """运行WebSocket数据收集"""
