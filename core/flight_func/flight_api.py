@@ -27,10 +27,9 @@ class FlightActions:
         try:
             result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")[0]
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
-            if abs(pd.to_datetime(result).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)) > timedelta(
-                    minutes=KLINE_INTERVAL_MINUTES) * 495:
-                logger.warning(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
-                raise ValueError(f"{market} duck_time 自检失败，差值大于{KLINE_INTERVAL_MINUTES * 495}分钟")
+            if abs(pd.to_datetime(result).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)) > timedelta(days=30):
+                logger.warning(f"{market} duck_time 自检失败，距离上次更新相差30天")
+                raise ValueError(f"{market} duck_time 自检失败，距离上次更新相差30天")
             max_time = pd.to_datetime(result).tz_localize(tz=timezone.utc)
             logger.info(f"{market}{SUFFIX} Ducktime已加载: {max_time}")
         except Exception as e:
