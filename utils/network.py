@@ -12,8 +12,8 @@ async def async_retry_getter(func, max_times=5, **kwargs):
         try:
             return await func(**kwargs)
         except Exception as e:
-            # if isinstance(e, BinanceAPIException) and e.code == -1003:
-            #     raise e
+            if isinstance(e, BinanceAPIException) and e.code == -1003:
+                raise e
             if max_times == 0:
                 raise e
             else:

@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 import pandas as pd
 
 from core.api.binance_market_restful import create_binance_market_api
+from core.api.exceptions import BinanceAPIException
 from utils import async_retry_getter
 from utils.log_kit import logger, divider
 
@@ -216,20 +217,35 @@ class OptimizedKlineFetcher:
         self.weight_manager = WeightManager(*fetcher.get_api_limits())
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
+    async def await_for_weight(self):
+        wait_time = self.weight_manager.get_wait_time()
+        if wait_time > 0:
+            logger.warning(f'等待{wait_time}秒权重恢复')
+            await asyncio.sleep(wait_time)
+
+    async def get_kline(self, symbol: str, interval: str, limit: int, end_timestamp = None, **kwargs) -> pd.DataFrame:
+        try:
+            data = await self.fetcher.get_candle(symbol=symbol, interval=interval, limit=limit,
+                                                 end_timestamp=end_timestamp)
+        except BinanceAPIException as e:
+            if e.code == -1003:
+                self.weight_manager.add_weight(self.weight_manager.max_weight)
+                await self.await_for_weight()
+                return await self.get_kline(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
+            else:
+                raise e
+        return data
+
     async def get_klines_with_retry(self, symbol: str, interval: str = '1m', limit=499, end_timestamp = None, max_retries: int = 3) -> Dict[str, Any]:
         """带重试机制的K线获取"""
         for attempt in range(max_retries):
             try:
                 async with self.semaphore:
                     # 等待权重可用
-                    wait_time = self.weight_manager.get_wait_time()
-                    if wait_time > 0:
-                        logger.warning(f'等待{wait_time}秒权重恢复')
-                        await asyncio.sleep(wait_time)
-
+                    await self.await_for_weight()
                     # 发起请求
                     self.weight_manager.add_weight()
-                    data = await self.fetcher.get_candle(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
+                    data = await self.get_kline(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
 
                     return {
                         'symbol': symbol,
@@ -275,14 +291,17 @@ class OptimizedKlineFetcher:
                 t = self.get_klines_with_retry(symbol=symbol, interval=interval, limit=limit, end_timestamp=end_timestamp)
                 tasks.append(t)
 
+            current_batch_result = []
             for coro in asyncio.as_completed(tasks):
                 result = await coro
-                results.append(result)
+                current_batch_result.append(result)
 
                 # 更新进度条描述
-                count = sum(1 for _ in results)
+                count = sum(1 for _ in current_batch_result)
                 if count % 100 == 0:
                     logger.debug(f'[Restful] {self.fetcher.trade_type} - process {count} / {len(fetch_symbols)}')
+
+            results.extend(current_batch_result)
             logger.ok(f'[Restful] {self.fetcher.trade_type} - process done. total: {len(fetch_symbols)}')
             # 统计结果
             failed = [r for r in results if not r.get('success', False)]
