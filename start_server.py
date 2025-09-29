@@ -35,12 +35,7 @@ if __name__ == "__main__":
         # 创建并启动服务器
         # 全局数据库连接
         duckdb_dir = DUCKDB_DIR
-        if not os.path.isabs(duckdb_dir):
-            duckdb_dir = os.path.join(os.getcwd(), duckdb_dir)
-        # absolute path
         pqt_dir = PARQUET_DIR
-        if not os.path.isabs(pqt_dir):
-            pqt_dir = os.path.join(os.getcwd(), pqt_dir)
         logger.info(f"Using Parquet directory: {pqt_dir}")
         
         # 创建数据库管理器

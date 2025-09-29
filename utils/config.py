@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import pandas as pd
 from dotenv import load_dotenv
 
+from utils.log_kit import logger
+
 # Load environment variables
 load_dotenv('config.env')
 KLINE_INTERVAL = os.getenv("KLINE_INTERVAL", "5m")  # Default interval for kline data
@@ -19,10 +21,16 @@ SUFFIX = f"_{KLINE_INTERVAL_MINUTES}m"
 
 # Storage configuration
 ENABLE_PQT = os.getenv("ENABLE_PQT", "true").lower() == "true"  # Whether to enable parquet files
+if not ENABLE_PQT:
+    logger.warning('ENABLE_PQT:false is Deprecated.')
 
 # Server configuration
 DUCKDB_DIR = os.getenv("DUCKDB_DIR", "data/duckdb.db")
+if not os.path.isabs(DUCKDB_DIR):
+    DUCKDB_DIR = os.path.join(os.getcwd(), DUCKDB_DIR)
 PARQUET_DIR = os.getenv("PARQUET_DIR", "data/pqt")
+if not os.path.isabs(PARQUET_DIR):
+    PARQUET_DIR = os.path.join(os.getcwd(), PARQUET_DIR)
 RESOURCE_PATH = os.getenv("RESOURCE_PATH", "data/hist")
 
 # Set environment variables
@@ -117,3 +125,6 @@ FLIGHT_PORT = os.getenv("FLIGHT_PORT", "8815")
 REDUNDANCY_HOURS = int(os.getenv('REDUNDANCY_HOURS', 1))
 RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 0))
 ENABLE_WS = os.getenv("ENABLE_WS", "false").lower() == "true"
+
+# Parquet file configuration
+PARQUET_FILE_PERIOD = int(os.getenv('PARQUET_FILE_PERIOD', 1))  # Days per parquet file

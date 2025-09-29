@@ -196,7 +196,7 @@ class DataJobs:
         asyncio.run(periodic())
 
     async def _duckdb_retention_async(self):
-        """定时导出一小时前的数据到parquet，并清理n周前的parquet文件"""
+        """定时将n天之前的duckdb数据导出到parquet文件中，并清理duckdb"""
         logger.info("[Scheduler] Starting periodic cleanup task")
 
         try:

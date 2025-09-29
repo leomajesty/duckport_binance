@@ -8,10 +8,8 @@ import asyncio
 import datetime
 import random
 
-import duckdb
-
-from data_cleaning import remove_out_of_trading_time, cleaning
-from utils.config import KLINE_INTERVAL, ENABLE_PQT, DUCKDB_DIR
+from data_cleaning import cleaning
+from utils.config import KLINE_INTERVAL, ENABLE_PQT
 from utils.log_kit import logger, divider
 from hist import (
     # Config
@@ -120,14 +118,14 @@ def history_to_storage(trade_type, interval='5m'):
         success_count, error_count = batch_process_data(trade_type, interval)
         if error_count > 0:
             if ENABLE_PQT:
-                logger.warning(f'{trade_type} parquet转换完成，但有 {error_count} 个年份转换失败')
+                logger.warning(f'{trade_type} parquet转换完成，但有 {error_count} 个文件转换失败')
             else:
-                logger.warning(f'{trade_type} duckdb写入完成，但有 {error_count} 个年份写入失败')
+                logger.warning(f'{trade_type} duckdb写入完成，但有 {error_count} 个文件转换失败')
         else:
             if ENABLE_PQT:
-                logger.info(f'{trade_type} parquet转换完成，所有年份转换成功')
+                logger.info(f'{trade_type} parquet转换完成，所有文件转换成功')
             else:
-                logger.info(f'{trade_type} duckdb写入完成，所有年份写入成功')
+                logger.info(f'{trade_type} duckdb写入完成，所有数据写入成功')
     except Exception as e:
         if ENABLE_PQT:
             logger.error(f'{trade_type} parquet转换过程中发生错误: {e}')

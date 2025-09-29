@@ -17,7 +17,8 @@ from tqdm import tqdm
 
 from utils.log_kit import logger
 import pandas as pd
-from utils.config import (daily_updated_set, RESOURCE_PATH, PARQUET_DIR, START_DATE, ENABLE_PQT, DUCKDB_DIR)
+from utils.config import (daily_updated_set, RESOURCE_PATH, PARQUET_DIR, START_DATE, ENABLE_PQT, DUCKDB_DIR,
+                          PARQUET_FILE_PERIOD, CONCURRENCY)
 from utils.db_manager import DatabaseManager
 
 
@@ -115,10 +116,12 @@ def transfer_daily_to_monthly(daily_list, need_analyse_set):
     logger.info('合并结束')
     return tasks
 
-def read_symbol_csv(symbol, zip_path, interval='5m', year=None, month=None):
-    reg = '-'.join([part for part in [symbol, interval, year, month] if isinstance(part, str) and part])
+def read_symbol_csv(symbol, zip_path, interval='5m', ydashm=None):
+    year = ydashm.split('-')[0]
+    month = ydashm.split('-')[1]
+    reg = '-'.join([part for part in [symbol, interval, ydashm] if isinstance(part, str) and part])
     zip_list = glob(os.path.join(zip_path, f'{symbol}/{reg}*.zip'))
-    if int(year) == datetime.now().year:
+    if int(year) == datetime.now().year and int(month) == datetime.now().month:
         recent_data = [os.path.join(zip_path, f'{symbol}/{symbol}-{interval}-latest.zip')]
         recent_data = [path for path in recent_data if os.path.exists(path)]
         if recent_data:
@@ -128,13 +131,12 @@ def read_symbol_csv(symbol, zip_path, interval='5m', year=None, month=None):
         return pd.DataFrame()
 
     # 合并monthly daily 数据
-    df = pd.concat(
-        Parallel(4)(delayed(pd.read_csv)(path_, header=None, encoding="utf-8", compression='zip',
+    df = pd.concat([pd.read_csv(path_, header=None, encoding="utf-8", compression='zip',
                                          names=['open_time', 'open', 'high', 'low', 'close', 'volume',
                                                 'close_time', 'quote_volume', 'trade_num',
                                                 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume',
                                                 'ignore']
-                                         ) for path_ in zip_list), ignore_index=True)
+                                         ) for path_ in zip_list], ignore_index=True)
     # 过滤表头行
     df = df[df['open_time'] != 'open_time']
     # 规范数据类型，防止计算avg_price报错
@@ -151,19 +153,32 @@ def read_symbol_csv(symbol, zip_path, interval='5m', year=None, month=None):
     df.reset_index(drop=True, inplace=True)  # 重置index
     return df
 
-def to_pqt(year: int, interval: str = '5m', market: str = 'usdt_perp'):
-    data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}/monthly_klines')
+def to_pqt(yms: list[str], interval: str = '5m', market: str = 'usdt_perp'):
+    filename = f'{market}_{yms[0]}_{len(yms)}M.parquet'
+    latest_pqt = get_latest_parquet(market, interval)
+    if os.path.exists(os.path.join(PARQUET_DIR, f'{market}_{interval}', filename)) and filename != latest_pqt:
+        logger.info(f'跳过 {filename}')
+        return
+    logger.info(f'开始转换 {market}_{interval} {yms[0]}数据...')
+    data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}', 'monthly_klines')
     symbols = os.listdir(data_path)
     dfs = []
-    for syb in tqdm(symbols):
-        df = read_symbol_csv(syb, data_path, interval, str(year))
+
+    def process_symbol_month(syb, ydashm):
+        df = read_symbol_csv(syb, data_path, interval, ydashm)
         if df.empty:
-            logger.warning(f'No data for {syb} in {year}')
-            continue
+            return None
         df['symbol'] = syb
         df['candle_begin_time'] = pd.to_datetime(df['open_time'], unit='ms')
         df.set_index('open_time', inplace=True)
-        dfs.append(df)
+        return df
+
+    results = Parallel(n_jobs=CONCURRENCY)(
+        delayed(process_symbol_month)(syb, ydashm)
+        for syb in tqdm(symbols)
+        for ydashm in yms
+    )
+    dfs.extend([df for df in results if df is not None])
 
     dfs = pd.concat(dfs, ignore_index=True)
     dfs = dfs[dfs['candle_begin_time'] <= dfs['candle_begin_time'].max() - timedelta(days=1)]  # 确保数据完整性
@@ -171,17 +186,61 @@ def to_pqt(year: int, interval: str = '5m', market: str = 'usdt_perp'):
     
     # 确保输出目录存在
     ensure_parquet_directories(market, interval)
-    dfs.to_parquet(f'{PARQUET_DIR}/{market}_{interval}/{market}_{year}.parquet', index=False)
+    dfs.to_parquet(f'{PARQUET_DIR}/{market}_{interval}/{filename}', index=False)
+    logger.info(f'{market}_{interval} {yms[0]}数据转换完成')
 
+def get_available_years_months(period_month: int = 6):
+    """
+    获取从START_DATE至今的所有年份列表
+    return:
+    {
+        "2021-01": ["2021-01", "2021-02", "2021-03", "2021-04", "2021-05", "2021-06"],
+        "2021-07": ["2021-07", "2021-08", "2021-09", "2021-10", "2021-11", "2021-12"],
+    }
+    """
+    assert 12 % period_month == 0, "period_month error"
+    yms = []
+    current_date = datetime.now()
+    init_date = pd.to_datetime('2019-01-01')
 
-def get_available_years(market: str, interval: str = '5m'):
-    """获取从START_DATE至今的所有年份列表"""
-    current_year = datetime.now().year
-    start_year = START_DATE.year
+    current = init_date.replace(day=1)  # 从月初开始
+
+    while current <= current_date:
+        yms.append(f'{current.year}-{current.month:02d}')
+        # 移动到下个月
+        if current.month + period_month > 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + period_month)
+
+    first = f'{START_DATE.year}-{START_DATE.month:02d}'
+    yms = [[ym for ym in yms if ym <= first][-1]] + [ym for ym in yms if ym > first]
+    yms_dict = {}
+    for ym in yms:
+        month = int(ym.split('-')[1])
+        yms_values = []
+        for range_ym in range(month, month + period_month):
+            yms_value = f'{ym.split('-')[0]}-{range_ym:02d}'
+            if yms_value >= first:
+                yms_values.append(yms_value)
+        yms_dict[ym] = yms_values
+
+    return yms_dict
+
+def get_latest_parquet(market: str, interval: str = '5m'):
+    """根据文件名获取现有parquet文件的最新时间"""
+    parquet_dir = os.path.join(PARQUET_DIR, f'{market}_{interval}')
+    if not os.path.exists(parquet_dir):
+        return None
     
-    years = list(range(start_year, current_year + 1))
-    logger.info(f'{market}_{interval} 配置年份范围: {START_DATE} 至今，共 {len(years)} 年: {years}')
-    return years
+    # 获取所有parquet文件
+    parquet_files = glob(os.path.join(parquet_dir, '*.parquet'))
+    if not parquet_files:
+        return None
+
+    files = [os.path.basename(parquet_file) for parquet_file in parquet_files]
+
+    return max(files)
 
 def ensure_parquet_directories(market: str, interval: str = '5m'):
     """确保parquet输出目录存在"""
@@ -226,8 +285,8 @@ def ensure_duckdb_tables(market: str, interval: str = '5m'):
         
         logger.info(f'duckdb表 {market}_{interval} 结构已确保存在')
 
-def to_duckdb(year: int, interval: str = '5m', market: str = 'usdt_perp'):
-    """将指定年份的数据写入duckdb数据库"""
+def to_duckdb(yms: list[str], interval: str = '5m', market: str = 'usdt_perp'):
+    """将指定年份/月份的数据写入duckdb数据库"""
     data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}/monthly_klines')
     symbols = os.listdir(data_path)
     
@@ -236,94 +295,92 @@ def to_duckdb(year: int, interval: str = '5m', market: str = 'usdt_perp'):
     
     db_path = get_duckdb_path()
     with DatabaseManager(db_path) as db:
-        # 删除该年份的旧数据（如果存在）
-        delete_sql = f"DELETE FROM {market}_{interval} WHERE EXTRACT(YEAR FROM open_time) = ?"
-        db.execute_query(delete_sql, (year,))
-        logger.info(f'已清理 {market}_{interval} {year}年的旧数据')
-        
-        total_rows = 0
-        for syb in tqdm(symbols, desc=f'写入 {market}_{interval} {year}年数据'):
-            df = read_symbol_csv(syb, data_path, interval, str(year))
-            if df.empty:
-                logger.warning(f'No data for {syb} in {year}')
-                continue
-            
-            # 准备数据
-            df['symbol'] = syb
-            df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-            
-            # 按时间排序
-            df = df.sort_values('open_time')
-            df = df[['open_time', 'symbol', 'open', 'high', 'low', 'close', 'volume',
-                     'quote_volume', 'trade_num', 'taker_buy_base_asset_volume',
-                     'taker_buy_quote_asset_volume', 'avg_price']]
-            
-            # 写入数据库
-            insert_sql = f"""INSERT INTO {market}_{interval} SELECT * FROM df"""
-            db.execute_write(insert_sql, df=df)
+        for ydashm in yms:
+            year = ydashm.split('-')[0]
+            month = ydashm.split('-')[1]
+            # 删除该年份/月份的旧数据（如果存在）
+            delete_sql = f"DELETE FROM {market}_{interval} WHERE EXTRACT(YEAR FROM open_time) = ? AND EXTRACT(MONTH FROM open_time) = ?"
+            db.execute_query(delete_sql, (year, month))
+            logger.info(f'已清理 {market}_{interval} {year}年{month}月的旧数据')
 
-            total_rows += len(df)
-        
-        logger.info(f'{market}_{interval} {year}年数据写入完成，共 {total_rows} 行')
+            total_rows = 0
+            for syb in tqdm(symbols, desc=f'写入 {market}_{interval} {year}年{month}月数据'):
+                df = read_symbol_csv(syb, data_path, interval, ydashm)
+                if df.empty:
+                    logger.warning(f'No data for {syb} in {ydashm}')
+                    continue
+
+                # 准备数据
+                df['symbol'] = syb
+                df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+
+                # 按时间排序
+                df = df.sort_values('open_time')
+                df = df[['open_time', 'symbol', 'open', 'high', 'low', 'close', 'volume',
+                         'quote_volume', 'trade_num', 'taker_buy_base_asset_volume',
+                         'taker_buy_quote_asset_volume', 'avg_price']]
+
+                # 写入数据库
+                insert_sql = f"""INSERT INTO {market}_{interval} SELECT * FROM df"""
+                db.execute_write(insert_sql, df=df)
+
+                total_rows += len(df)
+
+            logger.info(f'{market}_{interval} {year}年{month}月数据写入完成，共 {total_rows} 行 {ydashm}数据写入完成，共 {total_rows} 行')
 
 def batch_write_to_duckdb(market: str, interval: str = '5m'):
-    """批量将指定市场和间隔的所有可用年份数据写入duckdb数据库"""
+    """批量将指定市场和间隔的所有可用数据写入duckdb数据库"""
     logger.info(f'开始批量写入 {market}_{interval} 数据到duckdb数据库...')
     
     # 确保数据库表结构存在
     ensure_duckdb_tables(market, interval)
     
     # 获取可用年份
-    available_years = get_available_years(market, interval)
-    if not available_years:
-        logger.warning(f'{market}_{interval} 没有检测到可用年份数据')
+    available_yms = get_available_years_months(1)
+    if not available_yms:
+        logger.warning(f'{market}_{interval} 没有检测到可用数据')
         return
     
-    # 批量写入每个年份
     success_count = 0
     error_count = 0
     
-    for year in available_years:
+    for k, v in available_yms.items():
         try:
-            logger.info(f'开始写入 {market}_{interval} {year}年数据到duckdb...')
-            to_duckdb(year, interval, market)
+            logger.info(f'开始写入 {market}_{interval} {k}数据到duckdb...')
+            to_duckdb(v, interval=interval, market=market)
             success_count += 1
-            logger.info(f'{market}_{interval} {year}年数据写入duckdb完成')
+            logger.info(f'{market}_{interval} {k}数据写入duckdb完成')
         except Exception as e:
             error_count += 1
-            logger.error(f'{market}_{interval} {year}年数据写入duckdb失败: {e}')
+            logger.error(f'{market}_{interval} {k}数据写入duckdb失败: {e}')
     
-    logger.info(f'{market}_{interval} 批量写入duckdb完成: 成功 {success_count} 个年份, 失败 {error_count} 个年份')
+    logger.info(f'{market}_{interval} 批量写入duckdb完成: 成功 {success_count} 个, 失败 {error_count} 个')
     return success_count, error_count
 
 def batch_convert_to_parquet(market: str, interval: str = '5m'):
-    """批量转换指定市场和间隔的所有可用年份数据为parquet格式"""
+    """批量转换指定市场和间隔的所有可用数据为parquet格式"""
     logger.info(f'开始批量转换 {market}_{interval} 数据为parquet格式...')
     
     # 确保输出目录存在
     ensure_parquet_directories(market, interval)
     
-    # 获取可用年份
-    available_years = get_available_years(market, interval)
-    if not available_years:
-        logger.warning(f'{market}_{interval} 没有检测到可用年份数据')
+    available_yms = get_available_years_months(PARQUET_FILE_PERIOD)
+    if not available_yms:
+        logger.warning(f'{market}_{interval} 没有检测到可用数据')
         return
     
-    # 批量转换每个年份
     success_count = 0
     error_count = 0
-    
-    for year in available_years:
+
+    for k, v in available_yms.items():
         try:
-            logger.info(f'开始转换 {market}_{interval} {year}年数据...')
-            to_pqt(year, interval, market)
+            to_pqt(v, interval=interval, market=market)
             success_count += 1
-            logger.info(f'{market}_{interval} {year}年数据转换完成')
         except Exception as e:
             error_count += 1
-            logger.error(f'{market}_{interval} {year}年数据转换失败: {e}')
-    
-    logger.info(f'{market}_{interval} 批量转换完成: 成功 {success_count} 个年份, 失败 {error_count} 个年份')
+            logger.error(f'{market}_{interval} {k}数据转换失败: {e}')
+
+    logger.info(f'{market}_{interval} 批量转换完成: 成功 {success_count} 个, 失败 {error_count} 个')
     return success_count, error_count
 
 def batch_process_data(market: str, interval: str = '5m'):
