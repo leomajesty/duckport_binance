@@ -26,7 +26,7 @@ from hist import (
     async_download_file,
 
     # File management
-    get_local_path, clean_old_daily_zip, transfer_daily_to_monthly,
+    get_local_path, clean_old_daily_zip,
 
     # Data processing
     batch_process_data
@@ -102,10 +102,6 @@ def download_trade_type_data(trade_type, start_time, interval='5m'):
 
     end_time = datetime.datetime.now()
     logger.info(f'{trade_type} download end cost {(end_time - get_time).seconds} s = {(end_time - get_time).seconds / 60} min')
-
-    tasks = transfer_daily_to_monthly(daily_list, need_analyse_set)
-    if len(tasks) > 0:
-        asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks))
 
     history_to_storage(trade_type, interval)
 

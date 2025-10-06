@@ -76,56 +76,12 @@ def is_file_complete(file_path, expected_size=None):
     # Basic check: file exists and has some content
     return get_file_size(file_path) > 0
 
-def transfer_daily_to_monthly(daily_list, need_analyse_set):
-    sorted_list = sorted(daily_list, key=lambda x: x['local_path'], reverse=False)
-
-    tasks = []
-
-    num = 0
-    logger.info(f'开始合并，数量为{len(sorted_list)}')
-    for local_path, items in groupby(sorted_list, key=itemgetter('local_path')):
-        zip_files = []
-        day_set = set()
-        interval = ''
-        symbol = os.path.basename(local_path)
-        monthly_path = local_path.replace('daily_', 'monthly_')
-        for i in items:
-            interval = i['interval']
-            zip_files.append(os.path.join(i['local_path'], os.path.basename(i['key'])[0:-9]))
-            _day = datetime.strptime(i['key'][-23:-13], "%Y-%m-%d")
-            day_set.add(_day.toordinal())
-
-        days = pd.DataFrame(sorted(list(day_set)))
-        if len(days.diff().value_counts()) > 1:
-            # daily zip缺失某天或某几天的zip
-            need_analyse_set.add(monthly_path)
-        df_latest = pd.concat(Parallel(4)(
-            delayed(pd.read_csv)(path_, header=None, encoding="utf-8", compression='zip') for path_ in zip_files),
-            ignore_index=True)
-        df_latest = df_latest[df_latest[0] != 'open_time']
-        df_latest = df_latest.astype(dtype={0: int64})
-        df_latest.sort_values(by=0)
-        latest_monthly_zip = os.path.join(monthly_path, f'{symbol}-{interval}-latest.zip')
-        if local_path in daily_updated_set or not os.path.exists(latest_monthly_zip) or max((os.path.getmtime(file) for file in zip_files)) > os.path.getmtime(latest_monthly_zip):
-            if not os.path.exists(monthly_path):
-                os.makedirs(monthly_path)
-            compression_options = dict(method='zip', archive_name=f'{symbol}-{interval}-latest.csv')
-            df_latest.to_csv(latest_monthly_zip, header=None, index=None, compression=compression_options)
-
-        num += 1
-    logger.info('合并结束')
-    return tasks
-
 def read_symbol_csv(symbol, zip_path, interval='5m', ydashm=None):
-    year = ydashm.split('-')[0]
-    month = ydashm.split('-')[1]
     reg = '-'.join([part for part in [symbol, interval, ydashm] if isinstance(part, str) and part])
-    zip_list = glob(os.path.join(zip_path, f'{symbol}/{reg}*.zip'))
-    if int(year) == datetime.now().year and int(month) == datetime.now().month:
-        recent_data = [os.path.join(zip_path, f'{symbol}/{symbol}-{interval}-latest.zip')]
-        recent_data = [path for path in recent_data if os.path.exists(path)]
-        if recent_data:
-            zip_list.extend(recent_data)
+    zip_list = glob(os.path.join(zip_path, 'monthly_klines', f'{symbol}/{reg}*.zip'))
+    daily_files = glob(os.path.join(zip_path, 'daily_klines', f'{symbol}/{reg}*.zip'))
+    if daily_files:
+        zip_list.extend(daily_files)
 
     if not zip_list:
         return pd.DataFrame()
@@ -160,8 +116,8 @@ def to_pqt(yms: list[str], interval: str = '5m', market: str = 'usdt_perp'):
         logger.info(f'跳过 {filename}')
         return
     logger.info(f'开始转换 {market}_{interval} {yms[0]}数据...')
-    data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}', 'monthly_klines')
-    symbols = os.listdir(data_path)
+    data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}')
+    symbols = os.listdir(os.path.join(data_path, 'monthly_klines'))
     dfs = []
 
     def process_symbol_month(syb, ydashm):
@@ -181,7 +137,6 @@ def to_pqt(yms: list[str], interval: str = '5m', market: str = 'usdt_perp'):
     dfs.extend([df for df in results if df is not None])
 
     dfs = pd.concat(dfs, ignore_index=True)
-    dfs = dfs[dfs['candle_begin_time'] <= dfs['candle_begin_time'].max() - timedelta(days=1)]  # 确保数据完整性
     dfs.rename(columns={"candle_begin_time": "open_time"}, inplace=True)
     
     # 确保输出目录存在

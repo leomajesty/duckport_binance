@@ -76,8 +76,7 @@ async def get_symbols_by_session(session, params):
 
 def async_get_all_symbols(params):
     """Get all symbols synchronously"""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(get_symbols(params))
+    return asyncio.run(get_symbols(params))
 
 
 def async_get_usdt_symbols(params):

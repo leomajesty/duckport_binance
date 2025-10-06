@@ -48,9 +48,7 @@ def is_after_start_date(file_date_str):
 
 def async_get_daily_list(download_folder, symbols, trading_type, data_type, interval):
     """Get daily data file list synchronously"""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(download_daily_list(download_folder, symbols, trading_type, data_type, interval))
-
+    return asyncio.run(download_daily_list(download_folder, symbols, trading_type, data_type, interval))
 
 async def download_daily_list(download_folder, symbols, trading_type, data_type, interval):
     """Get daily data file list asynchronously"""
