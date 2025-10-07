@@ -37,10 +37,10 @@ class DatabaseManager:
         """初始化数据库连接"""
         try:
             if self.database_path:
-                self._connection = duckdb.connect(database=self.database_path, read_only=False)
+                self._connection = duckdb.connect(database=self.database_path, read_only=False, config={'timezone': 'UTC'})
                 logger.info(f"Using DuckDB directory: {self.database_path}")
             else:
-                self._connection = duckdb.connect(database=':memory:', read_only=False)
+                self._connection = duckdb.connect(database=':memory:', read_only=False, config={'timezone': 'UTC'})
                 logger.info("Using in-memory DuckDB")
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")

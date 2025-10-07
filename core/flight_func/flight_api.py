@@ -5,7 +5,6 @@ from datetime import *
 import pandas as pd
 import pyarrow as pa
 import pyarrow.flight as flight
-from dateutil import parser
 
 from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, GENESIS_TIME
 from utils.db_manager import DatabaseManager
@@ -103,10 +102,10 @@ class FlightGets:
             base_query = f"""
             SELECT
                 DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
-                first(open) as open, max(high) as high, min(low) as low, last(close) as close,
+                first(open order by open_time) as open, max(high) as high, min(low) as low, last(close order by open_time) as close,
                 sum(volume) as volume, sum(quote_volume) as quote_volume, sum(trade_num) as trade_num,
                 sum(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, sum(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
-                first(avg_price) as avg_price, symbol
+                first(avg_price order by open_time) as avg_price, symbol
             FROM read_parquet('{pqt_glob}')
             WHERE open_time >= '{begin:%Y-%m-%d %H:%M:%S}' AND open_time <= '{end:%Y-%m-%d %H:%M:%S}'
             """
@@ -134,10 +133,10 @@ class FlightGets:
             base_query = f"""
             SELECT
                 DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
-                first(open) as open, max(high) as high, min(low) as low, last(close) as close,
+                first(open order by open_time) as open, max(high) as high, min(low) as low, last(close order by open_time) as close,
                 sum(volume) as volume, sum(quote_volume) as quote_volume, sum(trade_num) as trade_num,
                 sum(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, sum(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
-                first(avg_price) as avg_price, symbol
+                first(avg_price order by open_time) as avg_price, symbol
             FROM {market}{SUFFIX}
             WHERE open_time >= '{begin:%Y-%m-%d %H:%M:%S}' AND open_time <= '{end:%Y-%m-%d %H:%M:%S}'
             """
@@ -190,10 +189,10 @@ class FlightGets:
                 -- 历史数据预聚合（Parquet）
                 SELECT 
                     DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
-                    first(open) as open, max(high) as high, min(low) as low, last(close) as close,
+                    first(open order by open_time) as open, max(high) as high, min(low) as low, last(close order by open_time) as close,
                     sum(volume) as volume, sum(quote_volume) as quote_volume, sum(trade_num) as trade_num,
                     sum(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, sum(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
-                    first(avg_price) as avg_price, symbol
+                    first(avg_price order by open_time) as avg_price, symbol
                 FROM read_parquet('{parquet_path}')
                 WHERE open_time >= '{historical_begin:%Y-%m-%d %H:%M:%S}' AND open_time < '{historical_end:%Y-%m-%d %H:%M:%S}'
                 """
@@ -216,10 +215,10 @@ class FlightGets:
                 -- 近期数据预聚合（DuckDB）
                 SELECT 
                     DATE_TRUNC('minute', open_time - (EXTRACT(MINUTE FROM (open_time - INTERVAL '{offset} minute')) % {interval}) * INTERVAL '1 minute') AS resample_time,
-                    first(open) as open, max(high) as high, min(low) as low, last(close) as close,
+                    first(open order by open_time) as open, max(high) as high, min(low) as low, last(close order by open_time) as close,
                     sum(volume) as volume, sum(quote_volume) as quote_volume, sum(trade_num) as trade_num,
                     sum(taker_buy_base_asset_volume) as taker_buy_base_asset_volume, sum(taker_buy_quote_asset_volume) as taker_buy_quote_asset_volume,
-                    first(avg_price) as avg_price, symbol
+                    first(avg_price order by open_time) as avg_price, symbol
                 FROM {market}{SUFFIX}
                 WHERE open_time >= '{recent_begin:%Y-%m-%d %H:%M:%S}' AND open_time <= '{recent_end:%Y-%m-%d %H:%M:%S}'
                 """

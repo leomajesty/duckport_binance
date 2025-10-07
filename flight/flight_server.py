@@ -5,9 +5,9 @@ import pyarrow as pa
 import pyarrow.flight as flight
 
 from core.flight_func.flight_api import FlightActions, FlightGets
-from core.flight_func.flight_data_jobs import DataJobs, WebsocketsDataJobs, RestfulDataJobs
+from core.flight_func.flight_data_jobs import WebsocketsDataJobs, RestfulDataJobs
 from utils.config import REDUNDANCY_HOURS
-from utils.db_manager import DatabaseManager, KlineDBManager
+from utils.db_manager import KlineDBManager
 from utils.log_kit import logger
 from utils.timer import func_timer
 
@@ -180,126 +180,9 @@ class FlightServer(flight.FlightServerBase):
         """列出支持的操作"""
         return [flight.ActionType(action, action) for action in dir(FlightActions) if action.startswith('action_')]
 
-    # def async_job(self):
-    #     # 启动定时任务线程
-    #     fetch_job = threading.Thread(target=self.start_periodic_fetch_job, daemon=True)
-    #     fetch_job.start()
-    #     retention_job = threading.Thread(target=self.start_retention_job, daemon=True)
-    #     retention_job.start()
-
-    # @func_timer
-    # async def save_exginfo(self, fetcher, market):
-    #     exginfo = await fetcher.get_exchange_info()
-    #     symbols_trading = TRADE_TYPE_MAP[market][0](exginfo)
-    #     infos_trading = [info for sym, info in exginfo.items() if sym in symbols_trading]
-    #     symbols_trading_df = pd.DataFrame.from_records(infos_trading)
-    #     # 保存symbols_trading数据到数据库
-    #     try:
-    #         # 更新内存缓存
-    #         self.flight_gets.update_exginfo(market, symbols_trading_df)
-    #         # 删除旧数据并插入新数据
-    #         self.db_manager.execute_write(f"DELETE FROM exginfo WHERE market = '{market}';")
-    #         # 明确指定列名，排除created_time
-    #         columns = ['market', 'symbol', 'status', 'base_asset', 'quote_asset', 'price_tick', 'lot_size',
-    #                    'min_notional_value', 'contract_type', 'margin_asset', 'pre_market']
-    #         self.db_manager.execute_write(f"INSERT INTO exginfo ({', '.join(columns)}) SELECT {', '.join(columns)} FROM df;",
-    #                                  df=symbols_trading_df)
-    #         logger.info(f"symbols_trading数据已保存到数据库: {market}, {len(symbols_trading_df)} 条记录")
-    #     except Exception as e:
-    #         logger.error(f"保存symbols_trading数据失败: {e}")
-    #     return symbols_trading
-
-    # @func_timer
-    # async def save_duck_time(self, market, current_time):
-    #     """保存当前时间到config_dict表"""
-    #     try:
-    #         # 更新内存缓存
-    #         self.flight_actions.duck_time[market] = str(current_time)
-    #         self.db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
-    #                                  (f'{market}_duck_time', str(current_time)))
-    #         logger.info(f"已保存 {market} 的当前时间: {current_time}")
-    #     except Exception as e:
-    #         logger.error(f"保存 {market} 当前时间失败: {e}")
-
-    # async def fetch_and_insert_binance_data_async(self, market, current_time, concurrent=FETCH_CONCURRENCY, interval='5m'):
-    #     """异步获取K线并写入duckdb表"""
-    #     async with create_aiohttp_session(10) as session:
-    #         fetcher = BinanceFetcher(market, session)
-    #
-    #         symbols_trading = await self.save_exginfo(fetcher, market)
-    #
-    #         optimized_fetcher = OptimizedKlineFetcher(fetcher, max_concurrent=concurrent)
-    #         results = await optimized_fetcher.get_all_klines(symbols_trading, interval=interval)
-    #         # 过滤掉失败的结果
-    #         successful_results = [pd.DataFrame(r['data']) for r in results if r.get('success', False)]
-    #         if not successful_results:
-    #             logger.info("没有成功的结果，无法保存")
-    #             return
-    #         df = pd.concat(successful_results)
-    #         df = df[df['open_time'] < current_time]
-    #         with timer("write to duckdb"):
-    #             # 写入数据库忽略重复数据
-    #             self.db_manager.execute_write(f"insert into {market}_{interval} select * from df on conflict do nothing;",
-    #                                      df=df)
-    #
-    #         await self.save_duck_time(market, current_time)
-
-    # async def duckdb_retention_async(self):
-    #     """定时导出一小时前的数据到parquet，并清理n周前的parquet文件"""
-    #     logger.info("[Scheduler] Starting periodic cleanup task")
-    #
-    #     try:
-    #         # 清理过期的duckdb数据
-    #         self.db_manager.execute_write(
-    #             f"DELETE FROM usdt_perp_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
-    #         self.db_manager.execute_write(
-    #             f"DELETE FROM usdt_spot_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
-    #         logger.info("[Scheduler] Cleaned up old DuckDB data")
-    #     except Exception as e:
-    #         logger.error(f"Error during DuckDB cleanup: {e}")
-
-    # def start_periodic_fetch_job(self):
-    #     loop = asyncio.new_event_loop()
-    #     asyncio.set_event_loop(loop)
-    #
-    #     async def periodic():
-    #         while True:
-    #             next_time = next_run_time(KLINE_INTERVAL)
-    #             divider(f"[Scheduler] next fetch runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
-    #             await async_sleep_until_run_time(next_time)
-    #             try:
-    #                 await self.fetch_and_insert_binance_data_async(market='usdt_perp', current_time=next_time,
-    #                                                           interval=KLINE_INTERVAL)
-    #                 await self.fetch_and_insert_binance_data_async(market='usdt_spot', current_time=next_time,
-    #                                                           interval=KLINE_INTERVAL)
-    #             except Exception as e:
-    #                 logger.error(f"Scheduler Error: {e}")
-    #
-    #     loop.run_until_complete(periodic())
-
-    # def start_retention_job(self):
-    #     """定时导出parquet文件,并清理过期的duckdb数据"""
-    #     if RETENTION_DAYS == 0:
-    #         logger.info("Retention days is set to 0, skipping retention job.")
-    #         return
-    #     loop = asyncio.new_event_loop()
-    #     asyncio.set_event_loop(loop)
-    #
-    #     async def periodic():
-    #         while True:
-    #             next_time = next_run_time('1h') + timedelta(minutes=3)  # 每小时的5分执行
-    #             divider(f"[Scheduler] next retention job runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
-    #             await async_sleep_until_run_time(next_time)
-    #             try:
-    #                 await self.duckdb_retention_async()
-    #             except Exception as e:
-    #                 logger.error(f"Scheduler Error: {e}")
-    #
-    #     loop.run_until_complete(periodic())
-
 def main():
     """启动Flight服务器"""
-    db_manager = DatabaseManager(database_path=None)
+    db_manager = KlineDBManager(database_path=None)
     server = FlightServer(db_manager)
     
     # 启动服务器
