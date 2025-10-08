@@ -79,14 +79,14 @@ def demo_get_data():
     begin = datetime.datetime.now() - datetime.timedelta(days=5)
     end = datetime.datetime.now() - datetime.timedelta(days=1)
 
-    with timer("获取USDT永续合约市场数据", logger.info):
-        res = client.get_market('usdt_perp', 60, 15, begin=begin)
-    with timer("转换为Pandas DataFrame", logger.info):
-        df = res.to_pandas()
-    print(df.tail(10))
+    # with timer("获取USDT永续合约市场数据", logger.info):
+    #     res = client.get_market('usdt_perp', 60, 15, begin=begin)
+    # with timer("转换为Pandas DataFrame", logger.info):
+    #     df = res.to_pandas()
+    # print(df.tail(10))
 
     with timer("获取BTC永续合约数据"):
-        res = client.get_symbol('usdt_perp', 'BTCUSDT', interval=30, offset=15)
+        res = client.get_symbol('usdt_perp', 'ETHUSDT', interval=60, offset=0)
     with timer("转换为Pandas DataFrame"):
         df = res.to_pandas()
     print(df.tail(10))
@@ -126,7 +126,7 @@ def main():
         demo_schema_information()
         demo_actions()
         demo_get_data()
-        check_data_integrity()
+        # check_data_integrity()
         
         logger.info("\n" + "=" * 60)
         logger.info("🎉 演示完成！")

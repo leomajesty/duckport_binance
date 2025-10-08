@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import gc
+import os.path
 import threading
 from datetime import *
 import pandas as pd
@@ -8,8 +9,10 @@ import sys
 
 from core.flight_func.flight_api import FlightActions, FlightGets
 from utils import next_run_time, async_sleep_until_run_time
+from utils.date_partition import get_latest_complete_parquet_file
 from utils.log_kit import logger, divider
-from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL, START_DATE, GENESIS_TIME
+from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL, START_DATE, GENESIS_TIME, \
+    PARQUET_DIR
 from utils.db_manager import KlineDBManager
 from core.component.candle_fetcher import BinanceFetcher, OptimizedKlineFetcher
 from core.component.candle_listener import MarketListener
@@ -24,7 +27,7 @@ class DataJobs:
         self._flight_actions = flight_actions
         self._db_manager: KlineDBManager = db_manager
 
-        self.init_history_data()
+        # self.init_history_data()
         self.update_recent_data()
 
     def init_history_data(self):
@@ -179,13 +182,10 @@ class DataJobs:
     def duckdb_retention_policy(self):
         """DuckDB数据保留策略"""
         """定时导出parquet文件,并清理过期的duckdb数据"""
-        if RETENTION_DAYS == 0:
-            logger.info("Retention days is set to 0, skipping retention job.")
-            return
-
         async def periodic():
             while True:
-                next_time = next_run_time('1h') + timedelta(minutes=3)  # 每小时的5分执行
+                # 每8小时的第3分钟执行
+                next_time = next_run_time('8h') + timedelta(minutes=3)
                 divider(f"[Scheduler] next retention job runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
                 await async_sleep_until_run_time(next_time)
                 try:
@@ -197,17 +197,29 @@ class DataJobs:
 
     async def _duckdb_retention_async(self):
         """定时将n天之前的duckdb数据导出到parquet文件中，并清理duckdb"""
-        logger.info("[Scheduler] Starting periodic cleanup task")
+        logger.info("[Scheduler] Starting periodic retention task")
 
-        try:
-            # 清理过期的duckdb数据
-            self._db_manager.execute_write(
-                f"DELETE FROM usdt_perp_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
-            self._db_manager.execute_write(
-                f"DELETE FROM usdt_spot_{KLINE_INTERVAL} WHERE open_time < now() - interval '{RETENTION_DAYS} days'")
-            logger.info("[Scheduler] Cleaned up old DuckDB data")
-        except Exception as e:
-            logger.error(f"Error during DuckDB cleanup: {e}")
+        for market in ['usdt_perp', 'usdt_spot']:
+            try:
+                duck_time = self._flight_actions.duck_time[market]
+                cutoff_time = duck_time - timedelta(days=RETENTION_DAYS)
+                pqt_info = get_latest_complete_parquet_file(cutoff_time, market=market)
+                if pqt_info and not pqt_info['exists']:
+                    filename = pqt_info['filename']
+                    with timer(f'{market} retention task: {filename}'):
+                        # 写入pqt
+                        pqt_file_path = os.path.join(PARQUET_DIR, f"{market}_{KLINE_INTERVAL}", filename)
+                        self._db_manager.execute_write(f"""
+                            COPY (SELECT * FROM {market}_{KLINE_INTERVAL} 
+                            WHERE open_time >= '{pqt_info['period_start']}' and open_time < '{pqt_info['period_end']}'
+                            ORDER BY open_time) 
+                            TO '{pqt_file_path}' (FORMAT parquet);""")
+                        # 清理过期的duckdb数据
+                        self._db_manager.execute_write(f"""
+                            DELETE FROM {market}_{KLINE_INTERVAL}
+                            WHERE open_time < ('{pqt_info['period_end']}'::timestamp - INTERVAL '1 day')""")
+            except Exception as e:
+                logger.error(f"Error during {market} retention job: {e}")
 
     async def _duckdb_periodic_fetch_async(self):
         next_time = next_run_time(KLINE_INTERVAL)

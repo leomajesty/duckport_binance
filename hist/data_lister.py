@@ -101,8 +101,7 @@ async def download_daily_list(download_folder, symbols, trading_type, data_type,
 
 def async_get_monthly_list(download_folder, symbols, trading_type, data_type, interval):
     """Get monthly data file list synchronously"""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
+    return asyncio.run(
         build_download_monthly_list(download_folder, symbols, trading_type, data_type, interval))
 
 
@@ -154,8 +153,7 @@ async def build_download_monthly_list(download_folder, symbols, trading_type, da
 
 def async_get_metrics_list(download_folder, symbols, trading_type, data_type, interval):
     """Get metrics data file list synchronously"""
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
+    return asyncio.run(
         build_download_metrics_list(download_folder, symbols, trading_type, data_type, interval))
 
 

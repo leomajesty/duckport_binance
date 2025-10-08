@@ -19,11 +19,6 @@ KLINE_INTERVAL = os.getenv("KLINE_INTERVAL", "5m")  # Default interval for kline
 KLINE_INTERVAL_MINUTES = int(KLINE_INTERVAL.replace('m', ''))
 SUFFIX = f"_{KLINE_INTERVAL_MINUTES}m"
 
-# Storage configuration
-ENABLE_PQT = os.getenv("ENABLE_PQT", "true").lower() == "true"  # Whether to enable parquet files
-if not ENABLE_PQT:
-    logger.warning('ENABLE_PQT:false is Deprecated.')
-
 # Server configuration
 DUCKDB_DIR = os.getenv("DUCKDB_DIR", "data/duckdb.db")
 if not os.path.isabs(DUCKDB_DIR):
@@ -43,9 +38,12 @@ if platform.system() == 'Windows':
 
 # Concurrency settings
 CONCURRENCY = int(os.getenv('CONCURRENCY', 2))
-semaphore = asyncio.Semaphore(value=min(CONCURRENCY, 8))
-api_semaphore = asyncio.Semaphore(value=min(CONCURRENCY, 3))
 FETCH_CONCURRENCY = min(CONCURRENCY, 10)
+DUCKDB_THREAD = min(CONCURRENCY, 8)
+
+# Factory functions to create asyncio primitives at runtime within an active event loop
+def create_download_semaphore() -> asyncio.Semaphore:
+    return asyncio.Semaphore(value=min(CONCURRENCY, 8))
 
 # Base URLs
 BASE_URL = 'https://data.binance.vision/'
@@ -123,7 +121,10 @@ daily_updated_set = set()
 # Flight server configuration
 FLIGHT_PORT = os.getenv("FLIGHT_PORT", "8815")
 REDUNDANCY_HOURS = int(os.getenv('REDUNDANCY_HOURS', 1))
-RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 0))
+RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 7))
+if RETENTION_DAYS <= 0:
+    logger.warning('RETENTION_DAYS 必须大于 0，已强制设置为 7')
+    RETENTION_DAYS = 7
 ENABLE_WS = os.getenv("ENABLE_WS", "false").lower() == "true"
 
 # Parquet file configuration

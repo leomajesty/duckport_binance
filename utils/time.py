@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime, timedelta
 import pytz
 
+from utils.config import START_DATE
+
 # 使用UTC时区作为默认时区
 DEFAULT_TZ = pytz.UTC
 

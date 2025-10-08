@@ -180,18 +180,6 @@ class FlightServer(flight.FlightServerBase):
         """列出支持的操作"""
         return [flight.ActionType(action, action) for action in dir(FlightActions) if action.startswith('action_')]
 
-def main():
-    """启动Flight服务器"""
-    db_manager = KlineDBManager(database_path=None)
-    server = FlightServer(db_manager)
-    
-    # 启动服务器
-    server.serve()
-    
-    logger.info("Daas is running...")
-
 if __name__ == "__main__":
-    interval = 1
-    li = [i for i in range(interval, 61, interval) if (60 % i == 0)]
-    print(li)
+    logger.warning('这不是程序入口，请执行start_server.py脚本')
     # main()

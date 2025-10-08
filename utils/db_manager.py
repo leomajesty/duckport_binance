@@ -1,12 +1,12 @@
 import os
 import threading
-import duckdb
-from typing import Optional, Any, List, Dict
+from typing import Any, List, Dict
 
+import duckdb
 import pandas as pd
 import pyarrow as pa
 
-from utils.config import SUFFIX, KLINE_INTERVAL
+from utils.config import SUFFIX, KLINE_INTERVAL, DUCKDB_THREAD
 from utils.log_kit import logger, divider
 
 dtypes_dict = {
@@ -20,7 +20,7 @@ class DatabaseManager:
     使用锁机制保证同一时间只有一个查询或写入操作
     """
     
-    def __init__(self, database_path: str = None):
+    def __init__(self, database_path: str = None, new: bool = False):
         """
         初始化数据库管理器
         
@@ -31,8 +31,19 @@ class DatabaseManager:
         self.database_path = database_path
         self._lock = threading.Lock()
         self._connection = None
+        if new:
+            self.destroy_all()
         self._init_connection()
-    
+
+    def destroy_all(self):
+        if self.database_path and os.path.exists(self.database_path):
+            try:
+                os.remove(self.database_path)
+                logger.info(f"已删除数据库文件: {self.database_path}")
+            except Exception as e:
+                logger.error(f"删除数据库文件失败: {e}")
+                raise
+
     def _init_connection(self):
         """初始化数据库连接"""
         try:
@@ -42,6 +53,7 @@ class DatabaseManager:
             else:
                 self._connection = duckdb.connect(database=':memory:', read_only=False, config={'timezone': 'UTC'})
                 logger.info("Using in-memory DuckDB")
+            self._connection.execute(f'SET threads = {DUCKDB_THREAD};')
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
             raise
@@ -265,20 +277,9 @@ class DatabaseManager:
 class KlineDBManager(DatabaseManager):
 
     def __init__(self, database_path: str = None, new: bool = False):
-        if new:
-            self.destroy_all()
-        super().__init__(database_path)
+        super().__init__(database_path, new)
         self._init_database()
         divider("数据库已启动")
-
-    def destroy_all(self):
-        if self.database_path and os.path.exists(self.database_path):
-            try:
-                os.remove(self.database_path)
-                logger.info(f"已删除数据库文件: {self.database_path}")
-            except Exception as e:
-                logger.error(f"删除数据库文件失败: {e}")
-                raise
 
     def _init_database(self):
         self.execute_write("""CREATE TABLE IF NOT EXISTS config_dict (

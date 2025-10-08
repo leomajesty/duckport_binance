@@ -15,6 +15,8 @@ __all__ = [
     "RESOURCE_PATH", "CONCURRENCY", "BASE_URL", "root_center_url",
     "SETTLED_USDT_PERP_SYMBOLS", "SETTLED_USDT_SPOT_SYMBOLS", "proxy", "use_proxy_download_file",
     "retry_times", "thunder", "START_MONTH",
+    # Factory exports for runtime asyncio primitives
+    "create_download_semaphore",
     
     # Symbol management
     "async_get_all_symbols", "async_get_usdt_symbols", "spot_symbols_filter",
@@ -30,6 +32,5 @@ __all__ = [
     "get_local_path", "clean_old_daily_zip",
     
     # Data processing
-    "batch_process_data", "batch_convert_to_parquet", "batch_write_to_duckdb",
-    "to_duckdb", "ensure_duckdb_tables"
+    "batch_process_data", "batch_convert_to_parquet",
 ]

@@ -11,20 +11,26 @@ import tqdm
 from hashlib import sha256
 from utils.log_kit import logger
 from utils.config import (
-    BASE_URL, semaphore, retry_times, thunder,
-    file_proxy, need_analyse_set, daily_updated_set
+    BASE_URL, retry_times, thunder,
+    file_proxy, need_analyse_set, daily_updated_set,
+    create_download_semaphore
 )
 
 
 def async_download_file(all_list, error_info_list):
     """Download all files with progress bar"""
     pbar = tqdm.tqdm(total=len(all_list), ncols=50, mininterval=0.5)
-    tasks = download_file(all_list, pbar, error_info_list)
-    asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks))
-    pbar.close()
+    async def _runner():
+        sem = create_download_semaphore()
+        tasks = download_file(all_list, pbar, error_info_list, sem)
+        await asyncio.gather(*tasks)
+    try:
+        asyncio.run(_runner())
+    finally:
+        pbar.close()
 
 
-def download_file(params, pbar, error_info_list):
+def download_file(params, pbar, error_info_list, sem):
     """Create download tasks for all files"""
     tasks = []
     for param in params:
@@ -72,14 +78,14 @@ def download_file(params, pbar, error_info_list):
             daily_updated_set.add(local_path)
             
         tasks.append(
-            download(param['local_path'], download_checksum_url, local_sum_path, local_zip_path, pbar, error_info_list))
+            download(param['local_path'], download_checksum_url, local_sum_path, local_zip_path, pbar, error_info_list, sem))
     return tasks
 
 
-async def download(local_path, download_checksum_url, local_sum_path, local_zip_path, pbar, error_info_list):
+async def download(local_path, download_checksum_url, local_sum_path, local_zip_path, pbar, error_info_list, sem):
     """Download single file with retry logic"""
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-        async with semaphore:
+        async with sem:
             retry = 0
             while True:
                 if retry > retry_times and 'daily_klines' in local_path:
@@ -113,7 +119,7 @@ async def download(local_path, download_checksum_url, local_sum_path, local_zip_
                 retry += 1
 
 
-async def download_miss_day_data(symbol, interval, day, local_path, sum_name, prefix, download_err_info):
+async def download_miss_day_data(symbol, interval, day, local_path, sum_name, prefix, download_err_info, sem):
     """Download missing day data with retry logic"""
     local_sum_path = os.path.join(local_path, sum_name)
     sum_url = BASE_URL + prefix + sum_name
@@ -123,7 +129,7 @@ async def download_miss_day_data(symbol, interval, day, local_path, sum_name, pr
     retry_zip_404 = 0
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-        async with semaphore:
+        async with sem:
             while True:
                 try:
                     sum_file = await session.get(sum_url, proxy=file_proxy, timeout=20)
