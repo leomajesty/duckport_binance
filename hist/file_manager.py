@@ -114,7 +114,11 @@ def to_pqt(yms: list[str], interval: str = '5m', market: str = 'usdt_perp'):
         return
     logger.info(f'开始转换 {market}_{interval} {yms[0]}数据...')
     data_path = os.path.join(RESOURCE_PATH, f'{market}_{interval}')
-    symbols = os.listdir(os.path.join(data_path, 'monthly_klines'))
+    monthly_data_path = os.path.join(data_path, 'monthly_klines')
+    os.makedirs(monthly_data_path, exist_ok=True)
+    daily_data_path = os.path.join(data_path, 'daily_klines')
+    os.makedirs(daily_data_path, exist_ok=True)
+    symbols = set(os.listdir(monthly_data_path)).union(set(os.listdir(daily_data_path)))
     dfs = []
 
     def process_symbol_month(syb, ydashm):

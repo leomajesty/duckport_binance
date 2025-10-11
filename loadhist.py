@@ -193,7 +193,7 @@ def save_latest_parquet_in_duckdb():
             file_name = get_latest_parquet(market, KLINE_INTERVAL)
             file_path = os.path.join(PARQUET_DIR, f'{market}_{KLINE_INTERVAL}', file_name)
             pqt_glob = f"{PARQUET_DIR}/{market}_{KLINE_INTERVAL}/{market}_*.parquet"
-            cutoff = get_parquet_cutoff_date(current_date=datetime.now(), days_before=30, market='usdt_perp')
+            cutoff = get_parquet_cutoff_date(current_date=datetime.now(), days_before=30)
             cutoff = cutoff - timedelta(days=1)
 
             with timer(f"写入 {market}_{KLINE_INTERVAL} 数据"):

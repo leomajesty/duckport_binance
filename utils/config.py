@@ -27,6 +27,8 @@ PARQUET_DIR = os.getenv("PARQUET_DIR", "data/pqt")
 if not os.path.isabs(PARQUET_DIR):
     PARQUET_DIR = os.path.join(os.getcwd(), PARQUET_DIR)
 RESOURCE_PATH = os.getenv("RESOURCE_PATH", "data/hist")
+if not os.path.isabs(PARQUET_DIR):
+    PARQUET_DIR = os.path.join(os.getcwd(), PARQUET_DIR)
 
 # Set environment variables
 os.environ['NUMEXPR_MAX_THREADS'] = "256"
