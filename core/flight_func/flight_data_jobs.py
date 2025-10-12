@@ -27,7 +27,7 @@ class DataJobs:
         self._flight_actions = flight_actions
         self._db_manager: KlineDBManager = db_manager
 
-        # self.init_history_data()
+        self.init_history_data()
         self.update_recent_data()
 
     def init_history_data(self):
