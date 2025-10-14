@@ -70,14 +70,14 @@ def demo_actions():
     market = "usdt_perp"
     client.ready(market)
 
-def demo_get_data():
+def demo_get_data(symbol: str = 'BTC'):
     """演示市场数据查询"""
     logger.info("\n5. Get演示")
     logger.info("-" * 30)
 
     client = FlightClient(addr=ADDR)
-    begin = datetime.datetime.now() - datetime.timedelta(days=5)
-    end = datetime.datetime.now() - datetime.timedelta(days=1)
+    begin = datetime.datetime.now() - datetime.timedelta(days=4)
+    end = datetime.datetime.now() - datetime.timedelta(days=3)
 
     # with timer("获取USDT永续合约市场数据", logger.info):
     #     res = client.get_market('usdt_perp', 60, 15, begin=begin)
@@ -85,11 +85,11 @@ def demo_get_data():
     #     df = res.to_pandas()
     # print(df.tail(10))
 
-    with timer("获取BTC永续合约数据"):
-        res = client.get_symbol('usdt_perp', 'ETHUSDT', interval=60, offset=0)
+    with timer(f"获取{symbol}永续合约数据"):
+        res = client.get_symbol('usdt_perp', f'{symbol}USDT', interval=60, offset=0, begin=begin, end=end)
     with timer("转换为Pandas DataFrame"):
         df = res.to_pandas()
-    print(df.tail(10))
+    print(df.head(10))
 
     # with timer("获取USDT spot exginfo数据"):
     #     res = client.get_exginfo('usdt_spot')
@@ -125,7 +125,7 @@ def main():
         demo_basic_operations()
         demo_schema_information()
         demo_actions()
-        demo_get_data()
+        demo_get_data('ATOM')
         # check_data_integrity()
         
         logger.info("\n" + "=" * 60)
