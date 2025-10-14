@@ -76,29 +76,20 @@ def demo_get_data(symbol: str = 'BTC'):
     logger.info("-" * 30)
 
     client = FlightClient(addr=ADDR)
-    begin = datetime.datetime.now() - datetime.timedelta(days=4)
+    begin = datetime.datetime.now() - datetime.timedelta(days=2)
     end = datetime.datetime.now() - datetime.timedelta(days=3)
 
-    # with timer("获取USDT永续合约市场数据", logger.info):
-    #     res = client.get_market('usdt_perp', 60, 15, begin=begin)
-    # with timer("转换为Pandas DataFrame", logger.info):
-    #     df = res.to_pandas()
-    # print(df.tail(10))
+    with timer("获取USDT永续合约市场数据", logger.info):
+        res = client.get_market('usdt_perp', 60, 15, begin=begin)
+    with timer("转换为Pandas DataFrame", logger.info):
+        df = res.to_pandas()
+    print(df.tail(10))
 
     with timer(f"获取{symbol}永续合约数据"):
         res = client.get_symbol('usdt_perp', f'{symbol}USDT', interval=60, offset=0, begin=begin, end=end)
     with timer("转换为Pandas DataFrame"):
         df = res.to_pandas()
     print(df.head(10))
-
-    # with timer("获取USDT spot exginfo数据"):
-    #     res = client.get_exginfo('usdt_spot')
-    # with timer("转换为Pandas DataFrame"):
-    #     df = res.to_pandas()
-    # print(df.tail(10))
-    # res = client.get_funding('usdt_perp')
-    # df = res.to_pandas()
-    # print(df.tail(10))
 
 def check_data_integrity():
     client = FlightClient(addr=ADDR)
@@ -125,8 +116,8 @@ def main():
         demo_basic_operations()
         demo_schema_information()
         demo_actions()
-        demo_get_data('ATOM')
-        # check_data_integrity()
+        demo_get_data('BTC')
+        check_data_integrity()
         
         logger.info("\n" + "=" * 60)
         logger.info("🎉 演示完成！")

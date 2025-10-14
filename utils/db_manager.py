@@ -6,7 +6,7 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 
-from utils.config import SUFFIX, KLINE_INTERVAL, DUCKDB_THREAD
+from utils.config import SUFFIX, KLINE_INTERVAL, DUCKDB_THREAD, DUCKDB_MEMORY
 from utils.log_kit import logger, divider
 
 dtypes_dict = {
@@ -53,7 +53,8 @@ class DatabaseManager:
             else:
                 self._connection = duckdb.connect(database=':memory:', read_only=False, config={'timezone': 'UTC'})
                 logger.info("Using in-memory DuckDB")
-            self._connection.execute(f'SET threads = {DUCKDB_THREAD};')
+            self._connection.execute(f"SET threads = {DUCKDB_THREAD};")
+            self._connection.execute(f"SET memory_limit = '{DUCKDB_MEMORY}';")
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
             raise

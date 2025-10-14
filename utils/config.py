@@ -42,6 +42,7 @@ if platform.system() == 'Windows':
 CONCURRENCY = int(os.getenv('CONCURRENCY', 2))
 FETCH_CONCURRENCY = min(CONCURRENCY, 10)
 DUCKDB_THREAD = min(CONCURRENCY, 8)
+DUCKDB_MEMORY = os.getenv('DUCKDB_MEMORY', '2GB')
 
 # Factory functions to create asyncio primitives at runtime within an active event loop
 def create_download_semaphore() -> asyncio.Semaphore:

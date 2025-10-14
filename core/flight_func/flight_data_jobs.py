@@ -69,11 +69,11 @@ class DataJobs:
                 pqt_time = self._flight_gets.pqt_time[market]
                 if duck_time and duck_time != GENESIS_TIME:
                     latest_times[market] = duck_time
-                    latest_symbols[market] = self.get_trading_symbols_by_time(duck_time, market, is_duck=True)
+                    latest_symbols[market] = self.get_trading_symbols_by_time(latest_times[market], market, is_duck=True)
                     logger.info(f"{market} 使用ducktime: {latest_times[market]}")
                 elif pqt_time and pqt_time != GENESIS_TIME:
                     latest_times[market] = pqt_time
-                    latest_symbols[market] = self.get_trading_symbols_by_time(pqt_time, market, is_duck=False)
+                    latest_symbols[market] = self.get_trading_symbols_by_time(latest_times[market], market, is_duck=False)
                     logger.info(f"{market} 使用pqttime: {latest_times[market]}")
                 else:
                     logger.warning(f"{market} 使用config.env中的配置")
@@ -85,13 +85,13 @@ class DataJobs:
         return latest_times, latest_symbols
 
     def get_trading_symbols_by_time(self, snaptime, market, is_duck=True):
+        snaptime_str = pd.to_datetime(snaptime).strftime('%Y-%m-%d %H:%M:%S')
         if is_duck:
             # duck_time是字符串格式
-            df = self._db_manager.fetch_df(f"select symbol from {market}{SUFFIX} where open_time = '{snaptime}'")
+            df = self._db_manager.fetch_df(f"select symbol from {market}{SUFFIX} where open_time = ('{snaptime_str}'::timestamp - '{KLINE_INTERVAL}'::interval)")
             return df['symbol'].to_list()
         else:
             # pqt_time是pandas Timestamp格式，需要转换为字符串
-            snaptime_str = pd.to_datetime(snaptime).strftime('%Y-%m-%d %H:%M:%S')
             df = self._db_manager.fetch_df(
                 f"SELECT symbol from read_parquet('{self._flight_gets._pqt_path}/{market}{SUFFIX}/*.parquet') where open_time = '{snaptime_str}'")
             return df['symbol'].to_list()
