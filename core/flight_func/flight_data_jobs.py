@@ -8,7 +8,7 @@ import pandas as pd
 import sys
 
 from core.flight_func.flight_api import FlightActions, FlightGets
-from utils import next_run_time, async_sleep_until_run_time
+from utils import next_run_time, async_sleep_until_run_time, now_time
 from utils.date_partition import get_latest_complete_parquet_file
 from utils.log_kit import logger, divider
 from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, RETENTION_DAYS, KLINE_INTERVAL, START_DATE, GENESIS_TIME, \
@@ -70,11 +70,9 @@ class DataJobs:
                 if duck_time and duck_time != GENESIS_TIME:
                     latest_times[market] = duck_time
                     latest_symbols[market] = self.get_trading_symbols_by_time(latest_times[market], market, is_duck=True)
-                    logger.info(f"{market} 使用ducktime: {latest_times[market]}")
                 elif pqt_time and pqt_time != GENESIS_TIME:
                     latest_times[market] = pqt_time
                     latest_symbols[market] = self.get_trading_symbols_by_time(latest_times[market], market, is_duck=False)
-                    logger.info(f"{market} 使用pqttime: {latest_times[market]}")
                 else:
                     logger.warning(f"{market} 使用config.env中的配置")
                     latest_times[market] = pd.to_datetime(START_DATE).tz_localize(tz=timezone.utc)
@@ -313,7 +311,7 @@ class WebsocketsDataJobs(DataJobs):
                     market_df = pd.concat(market_df)
                     if market_df is not None:
                         self.write_kline(market_df, market, run_time)
-                        logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {run_time}")
+                        logger.debug(f"已写入 {_market} 市场数据{len(market_df)}条: at {now_time()}")
 
                 # 创建MarketListener实例，传入回调函数
                 listener = MarketListener(market=market, db_manager=self._db_manager, data_callback=data_callback, exginfo_callback=self.save_exginfo)
