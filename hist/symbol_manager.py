@@ -29,7 +29,7 @@ async def request_session_4_list(session, params):
         try:
             async with session.get(root_center_url, params=params, proxy=proxy, timeout=20) as response:
                 data = await response.text()
-                root = objectify.fromstring(data.encode('ascii'))
+                root = objectify.fromstring(data.encode('UTF-8'))
                 result.append(root)
 
                 if root.IsTruncated:
@@ -60,7 +60,7 @@ async def get_symbols(params):
 async def get_symbols_by_session(session, params):
     """Get symbols using existing session"""
     data = await request_session(session, params)
-    root = objectify.fromstring(data.encode('ascii'))
+    root = objectify.fromstring(data.encode('UTF-8'))
     result = []
     for item in root.CommonPrefixes:
         param = item.Prefix

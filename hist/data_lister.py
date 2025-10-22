@@ -76,7 +76,7 @@ async def download_daily_list(download_folder, symbols, trading_type, data_type,
 
     for task in tasks:
         data = task.result()
-        root = objectify.fromstring(data.encode('ascii'))
+        root = objectify.fromstring(data.encode('UTF-8'))
         if getattr(root, 'Contents', None) is None:
             continue
         symbol = root.Prefix.text.split('/')[-3]
@@ -129,7 +129,7 @@ async def build_download_monthly_list(download_folder, symbols, trading_type, da
     result = []
     for task in tasks:
         data = task.result()
-        root = objectify.fromstring(data.encode('ascii'))
+        root = objectify.fromstring(data.encode('UTF-8'))
         if getattr(root, 'Contents', None) is None:
             continue
         symbol = root.Prefix.text.split('/')[-3]
