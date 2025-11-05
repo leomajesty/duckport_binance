@@ -1,4 +1,3 @@
-import abc
 import asyncio
 from datetime import datetime
 from typing import Dict, Any
@@ -10,7 +9,7 @@ from core.api import (get_coin_futures_multi_candlesticks_socket, get_spot_multi
 from core.bus import TRADE_TYPE_MAP
 from core.component.candle_fetcher import BinanceFetcher
 from utils import convert_interval_to_timedelta, get_logger, create_aiohttp_session
-from utils.config import CONCURRENCY, KLINE_INTERVAL, SUFFIX
+from utils.config import KLINE_INTERVAL, FETCH_CONCURRENCY
 from utils.db_manager import KlineDBManager
 from utils.log_kit import logger, divider
 from utils.time import now_time, async_sleep_until_run_time, next_run_time
@@ -303,7 +302,7 @@ class MarketListener:
         if delist:
             logger.warning(f'Symbols delist: {delist}')
             for symbol in delist:
-                group_id = hash(symbol) % CONCURRENCY
+                group_id = hash(symbol) % FETCH_CONCURRENCY
                 if group_id in self.listeners:
                     listener: CandleListener = self.listeners[group_id]
                     listener.remove_symbols(symbol)
@@ -312,7 +311,7 @@ class MarketListener:
         if onboard:
             logger.warning(f'Symbols onboard: {onboard}')
             for symbol in onboard:
-                group_id = hash(symbol) % CONCURRENCY
+                group_id = hash(symbol) % FETCH_CONCURRENCY
                 if group_id not in self.listeners:
                     # 创建新的监听器组
                     self.listeners[group_id] = CandleListener(self.market, [symbol], KLINE_INTERVAL, self.main_queue)
@@ -332,9 +331,9 @@ class MarketListener:
 
     @staticmethod
     def create_listeners(market, symbols, que) -> dict[int, CandleListener]:
-        groups = [[] for i in range(CONCURRENCY)]
+        groups = [[] for _ in range(FETCH_CONCURRENCY)]
         for sym in symbols:
-            group_id = hash(sym) % CONCURRENCY
+            group_id = hash(sym) % FETCH_CONCURRENCY
             groups[group_id].append(sym)
         listeners = {}
         for idx, grp in enumerate(groups):
