@@ -216,6 +216,8 @@ class DataJobs:
                         self._db_manager.execute_write(f"""
                             DELETE FROM {market}_{KLINE_INTERVAL}
                             WHERE open_time < ('{pqt_info['period_end']}'::timestamp - INTERVAL '1 day')""")
+                        # 修改pqt_time
+                        self._flight_gets.refresh_pqt_time()
             except Exception as e:
                 logger.error(f"Error during {market} retention job: {e}")
 

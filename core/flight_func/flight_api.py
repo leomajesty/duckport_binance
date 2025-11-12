@@ -59,6 +59,10 @@ class FlightGets:
         self.exginfo = {}
         self._init_exginfo()
 
+    def refresh_pqt_time(self):
+        self.pqt_time['usdt_perp'] = self._pqt_time('usdt_perp')
+        self.pqt_time['usdt_spot'] = self._pqt_time('usdt_spot')
+
     def _pqt_time(self, market: str):
         """更新Parquet文件的最新时间"""
         max_time = GENESIS_TIME
