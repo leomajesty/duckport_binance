@@ -1,10 +1,12 @@
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 import os
-from typing import Optional
 
 import pandas as pd
 
-from utils.config import START_DATE, PARQUET_FILE_PERIOD, PARQUET_DIR, KLINE_INTERVAL
+from utils.config import PARQUET_DIR
+from utils.config import PARQUET_FILE_PERIOD
+from utils.config import START_DATE
 
 
 def get_available_years_months(period_month: int = 6):
@@ -19,26 +21,26 @@ def get_available_years_months(period_month: int = 6):
     assert 12 % period_month == 0, "period_month error"
     yms = []
     current_date = datetime.now()
-    init_date = pd.to_datetime('2019-01-01')
+    init_date = pd.to_datetime("2019-01-01")
 
     current = init_date.replace(day=1)  # 从月初开始
 
     while current <= current_date:
-        yms.append(f'{current.year}-{current.month:02d}')
+        yms.append(f"{current.year}-{current.month:02d}")
         # 移动到下个月
         if current.month + period_month > 12:
             current = current.replace(year=current.year + 1, month=1)
         else:
             current = current.replace(month=current.month + period_month)
 
-    first = f'{START_DATE.year}-{START_DATE.month:02d}'
+    first = f"{START_DATE.year}-{START_DATE.month:02d}"
     yms = [[ym for ym in yms if ym <= first][-1]] + [ym for ym in yms if ym > first]
     yms_dict = {}
     for ym in yms:
-        month = int(ym.split('-')[1])
+        month = int(ym.split("-")[1])
         yms_values = []
         for range_ym in range(month, month + period_month):
-            yms_value = f'{ym.split('-')[0]}-{range_ym:02d}'
+            yms_value = f"{ym.split('-')[0]}-{range_ym:02d}"
             if yms_value >= first:
                 yms_values.append(yms_value)
         yms_dict[ym] = yms_values
@@ -47,9 +49,9 @@ def get_available_years_months(period_month: int = 6):
 
 
 def get_parquet_cutoff_date(
-    current_date: Optional[datetime] = None,
+    current_date: datetime | None = None,
     days_before: int = 30,
-) -> Optional[datetime]:
+) -> datetime | None:
     """
     计算parquet文件的截止日期
 
@@ -111,9 +113,9 @@ def _adjust_to_parquet_boundary(date: datetime) -> datetime:
 
 def get_latest_complete_parquet_file(
     given_date: datetime,
-    market: str = 'usdt_perp',
-    interval: str = '5m',
-) -> Optional[dict]:
+    market: str = "usdt_perp",
+    interval: str = "5m",
+) -> dict | None:
     """
     找到给定日期下应该被写入的最近一个完整的parquet文件
 
@@ -146,14 +148,16 @@ def get_latest_complete_parquet_file(
         return None
 
     # 如果启用文件验证，检查文件是否实际存在
-    file_path = os.path.join(PARQUET_DIR, f"{market}_{interval}", theoretical_file['filename'])
-    theoretical_file['file_path'] = file_path
-    theoretical_file['exists'] = os.path.exists(file_path)
+    file_path = os.path.join(PARQUET_DIR, f"{market}_{interval}", theoretical_file["filename"])
+    theoretical_file["file_path"] = file_path
+    theoretical_file["exists"] = os.path.exists(file_path)
 
     return theoretical_file
 
 
-def _calculate_theoretical_latest_file(given_date: datetime, market: str, interval: str) -> Optional[dict]:
+def _calculate_theoretical_latest_file(
+    given_date: datetime, market: str, interval: str
+) -> dict | None:
     """
     计算理论上的最近完整parquet文件
 
@@ -170,7 +174,9 @@ def _calculate_theoretical_latest_file(given_date: datetime, market: str, interv
         period_months = PARQUET_FILE_PERIOD
 
         # 计算从START_DATE到给定日期的完整周期数
-        months_since_start = (given_date.year - START_DATE.year) * 12 + (given_date.month - START_DATE.month)
+        months_since_start = (given_date.year - START_DATE.year) * 12 + (
+            given_date.month - START_DATE.month
+        )
         complete_periods = months_since_start // period_months
 
         # 如果给定日期正好在周期边界上，使用前一个周期
@@ -214,30 +220,30 @@ def _calculate_theoretical_latest_file(given_date: datetime, market: str, interv
             next_month_year = period_end_year
             next_month_month = period_end_month + 1
         last_day_dt = datetime(next_month_year, next_month_month, 1)
-        end_date_str = last_day_dt.strftime('%Y-%m-%d')
+        end_date_str = last_day_dt.strftime("%Y-%m-%d")
 
         return {
-            'filename': filename,
-            'period_start': start_date_str,
-            'period_end': end_date_str,
-            'period_months': period_months,
-            'file_path': '',  # 将在调用函数中设置
-            'exists': None   # 将在调用函数中设置
+            "filename": filename,
+            "period_start": start_date_str,
+            "period_end": end_date_str,
+            "period_months": period_months,
+            "file_path": "",  # 将在调用函数中设置
+            "exists": None,  # 将在调用函数中设置
         }
 
     except Exception:
         return None
 
 
-if __name__ == '__main__':
-    market = 'usdt_perp'
+if __name__ == "__main__":
+    market = "usdt_perp"
     test_date = datetime(2025, 5, 9)
     test_date = test_date - timedelta(days=7)
     # print(get_available_years_months(period_month=2))
     #
     # 测试get_parquet_cutoff_date函数
     print("\n测试get_parquet_cutoff_date函数:")
-    cutoff = get_parquet_cutoff_date(current_date=test_date, days_before=30, market='usdt_perp')
+    cutoff = get_parquet_cutoff_date(current_date=test_date, days_before=30, market="usdt_perp")
     print(f"截止日期: {cutoff}")
     print(f"截止月份: {cutoff:%Y-%m}")
 
@@ -250,4 +256,3 @@ if __name__ == '__main__':
         print(f"  文件存在: {latest_file2['exists']}")
     else:
         print("  未找到完整的parquet文件")
-

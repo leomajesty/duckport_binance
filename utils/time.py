@@ -1,8 +1,9 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
+
 import pytz
 
-from utils.config import START_DATE
 
 # 使用UTC时区作为默认时区
 DEFAULT_TZ = pytz.UTC
@@ -14,13 +15,13 @@ def now_time() -> datetime:
 
 
 def convert_interval_to_timedelta(time_interval: str) -> timedelta:
-    if time_interval.endswith('m') or time_interval.endswith('T'):
+    if time_interval.endswith("m") or time_interval.endswith("T"):
         return timedelta(minutes=int(time_interval[:-1]))
 
-    if time_interval.endswith('H') or time_interval.endswith('h'):
+    if time_interval.endswith("H") or time_interval.endswith("h"):
         return timedelta(hours=int(time_interval[:-1]))
 
-    raise ValueError('time_interval %s format error', time_interval)
+    raise ValueError("time_interval %s format error", time_interval)
 
 
 async def async_sleep_until_run_time(run_time):

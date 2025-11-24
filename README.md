@@ -1,7 +1,7 @@
 # DuckPort - 加密货币K线数据服务
 
 基于Arrow Flight协议的加密货币K线数据服务，支持高效的历史数据和实时数据查询传输。
-github地址：https://github.com/leomajesty/duckport_binance
+github地址：<https://github.com/leomajesty/duckport_binance>
 
 ## 功能特性
 
@@ -16,7 +16,13 @@ github地址：https://github.com/leomajesty/duckport_binance
 ## 安装依赖
 
 ```bash
-pip install -r requirements.txt
+# about uv [https://docs.astral.sh/uv/]
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# sync dependencies
+uv sync
+
+source .venv/bin/activate
 ```
 
 ## 环境配置
@@ -33,18 +39,22 @@ pip install -r requirements.txt
 系统使用`config.env`文件进行配置，主要配置项如下：
 
 #### 服务配置
+
 - **FLIGHT_PORT**: Flight服务端口，默认值：8815
 - **CONCURRENCY**: 获取数据时的并发数，默认值：5
 
 #### 网络配置
-- **PROXY_URL**: 代理地址，默认值：http://localhost:1082
+
+- **PROXY_URL**: 代理地址，默认值：<http://localhost:1082>
 
 #### 存储配置
+
 - **DUCKDB_DIR**: DuckDB数据库文件路径，默认值：data/duckdb.db
 - **PARQUET_DIR**: Parquet文件路径，默认值：data/pqt
 - **RESOURCE_PATH**: 历史数据资源目录，默认值：data/hist
 
 #### 数据配置
+
 - **REDUNDANCY_HOURS**: 查询范围冗余时间（小时），默认值：1
 - **START_MONTH**: 历史数据开始时间，默认值：2025-02
 - **KLINE_INTERVAL**: K线周期，默认值：15m
@@ -58,6 +68,7 @@ pip install -r requirements.txt
 ### 历史数据加载
 
 `loadhist.py`脚本的主要功能：
+
 - 下载Binance的USDT永续合约和现货市场历史数据
 - 支持网络连通性测试和代理配置
 - 自动处理数据下载、清理和存储转换
@@ -301,4 +312,4 @@ schema = client.get_schema("usdt_perp")
 - **时区**: UTC统一时区
 - **数据源**: Binance API (期货和现货市场)
 - **下载策略**: 异步并发下载 + 重试机制
-- **数据处理**: 批量处理 + 自动格式转换 
+- **数据处理**: 批量处理 + 自动格式转换

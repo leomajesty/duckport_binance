@@ -19,13 +19,16 @@ divider('文字是居中的哦，英文和中文我尽量适配了。。。', se
 ```
 """
 
+from datetime import datetime
 import logging
 import sys
 import time
 import unicodedata
-from datetime import datetime
 
-from colorama import Fore, Style, init
+from colorama import Fore
+from colorama import Style
+from colorama import init
+
 
 init(autoreset=True)
 
@@ -36,17 +39,23 @@ init(autoreset=True)
 # ====================================================================================================
 OK_LEVEL = 25
 logging.addLevelName(OK_LEVEL, "OK")
+
+
 def ok(self, message, *args, **kwargs):
     if self.isEnabledFor(OK_LEVEL):
         self._log(OK_LEVEL, message, args, **kwargs)
+
 
 logging.Logger.ok = ok
 
 QUERY_LEVEL = 21
 logging.addLevelName(QUERY_LEVEL, "QUERY")
+
+
 def query(self, message, *args, **kwargs):
     if self.isEnabledFor(QUERY_LEVEL):
         self._log(QUERY_LEVEL, message, args, **kwargs)
+
 
 logging.Logger.query = query
 
@@ -64,7 +73,7 @@ def get_display_width(text: str) -> int:
     """
     width = 0
     for char in text:
-        if unicodedata.east_asian_width(char) in ('F', 'W', 'A'):
+        if unicodedata.east_asian_width(char) in ("F", "W", "A"):
             width += 1.685
         else:
             width += 1
@@ -80,7 +89,7 @@ def get_display_width(text: str) -> int:
 # ====================================================================================================
 class SimonsFormatter(logging.Formatter):
     FORMATS = {
-        logging.DEBUG: ('⚙️', ''),
+        logging.DEBUG: ("⚙️", ""),
         logging.INFO: (Fore.BLUE, "🔵 "),
         logging.WARNING: (Fore.YELLOW, "🔔 "),
         logging.ERROR: (Fore.RED, "❌ "),
@@ -96,7 +105,6 @@ class SimonsFormatter(logging.Formatter):
 
 
 class SimonsConsoleHandler(logging.StreamHandler):
-
     def emit(self, record):
         if record.levelno == logging.DEBUG:
             print(record.msg, flush=True)
@@ -111,9 +119,9 @@ class SimonsConsoleHandler(logging.StreamHandler):
 class SimonsLogger:
     _instance = dict()
 
-    def __new__(cls, name='Log'):
+    def __new__(cls, name="Log"):
         if cls._instance.get(name) is None:
-            cls._instance[name] = super(SimonsLogger, cls).__new__(cls)
+            cls._instance[name] = super().__new__(cls)
             cls._instance[name]._initialize_logger(name)
         return cls._instance[name]
 
@@ -139,11 +147,11 @@ class SimonsLogger:
 # ====================================================================================================
 def get_logger(name=None) -> logging.Logger:
     if name is None:
-        name = 'BinanceDataTool'
+        name = "BinanceDataTool"
     return SimonsLogger(name).logger
 
 
-def divider(name='', sep='=', logger_=None, display_time=True) -> None:
+def divider(name="", sep="=", logger_=None, display_time=True) -> None:
     """
     画一个带时间戳的横线
     :param name: 中间的名称
@@ -152,11 +160,11 @@ def divider(name='', sep='=', logger_=None, display_time=True) -> None:
     :param _logger: 指定输出的log文件
     """
     seperator_len = 72
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if display_time:
-        middle = f' {name} {now} '
+        middle = f" {name} {now} "
     else:
-        middle = f' {name} '
+        middle = f" {name} "
     middle_width = get_display_width(middle)
     decoration_count = max(4, (seperator_len - middle_width) // 2)
     line = sep * decoration_count + middle + sep * decoration_count
@@ -172,10 +180,10 @@ def divider(name='', sep='=', logger_=None, display_time=True) -> None:
     time.sleep(0.05)
 
 
-logger = get_logger('binance_datatool')
+logger = get_logger("binance_datatool")
 
 # 直接运行，查看使用案例
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 输出日志信息
     logger.debug("调试信息，没有标记和颜色，等同于print")
     logger.info("提示信息，蓝色的，可以记录一些中间结果")
@@ -185,6 +193,6 @@ if __name__ == '__main__':
     logger.warning("警告信息，黄色的，通常表示警告")
     logger.error("错误信息，红色的，通常是报错的相关提示")
     logger.critical("重要提示，深红色。通常是非常关键的信息")
-    divider('这个是我做的分割线的功能')
-    divider('点点是可以换的', sep='*')
-    divider('文字是居中的哦，英文和中文我尽量适配了。。。', sep='-')
+    divider("这个是我做的分割线的功能")
+    divider("点点是可以换的", sep="*")
+    divider("文字是居中的哦，英文和中文我尽量适配了。。。", sep="-")

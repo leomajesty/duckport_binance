@@ -3,20 +3,22 @@ Configuration module for data center
 Contains all configuration parameters and constants
 """
 
+import asyncio
+from datetime import UTC
+from datetime import datetime
 import os
 import platform
-import asyncio
-from datetime import datetime, timezone
 
-import pandas as pd
 from dotenv import load_dotenv
+import pandas as pd
 
 from utils.log_kit import logger
 
+
 # Load environment variables
-load_dotenv('config.env')
+load_dotenv("config.env")
 KLINE_INTERVAL = os.getenv("KLINE_INTERVAL", "5m")  # Default interval for kline data
-KLINE_INTERVAL_MINUTES = int(KLINE_INTERVAL.replace('m', ''))
+KLINE_INTERVAL_MINUTES = int(KLINE_INTERVAL.replace("m", ""))
 SUFFIX = f"_{KLINE_INTERVAL_MINUTES}m"
 
 # Server configuration
@@ -31,33 +33,36 @@ if not os.path.isabs(RESOURCE_PATH):
     RESOURCE_PATH = os.path.join(os.getcwd(), RESOURCE_PATH)
 
 # Set environment variables
-os.environ['NUMEXPR_MAX_THREADS'] = "256"
+os.environ["NUMEXPR_MAX_THREADS"] = "256"
 
 # Platform specific settings
-if platform.system() == 'Windows':
+if platform.system() == "Windows":
     import asyncio
+
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Concurrency settings
-CONCURRENCY = int(os.getenv('CONCURRENCY', 2))
+CONCURRENCY = int(os.getenv("CONCURRENCY", 2))
 FETCH_CONCURRENCY = min(CONCURRENCY, 10)
 DUCKDB_THREAD = min(CONCURRENCY, 8)
-DUCKDB_MEMORY = os.getenv('DUCKDB_MEMORY', '2GB')
+DUCKDB_MEMORY = os.getenv("DUCKDB_MEMORY", "2GB")
+
 
 # Factory functions to create asyncio primitives at runtime within an active event loop
 def create_download_semaphore() -> asyncio.Semaphore:
     return asyncio.Semaphore(value=min(CONCURRENCY, 8))
 
+
 # Base URLs
-BASE_URL = 'https://data.binance.vision/'
-root_center_url = 'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision'
+BASE_URL = "https://data.binance.vision/"
+root_center_url = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
 
 # Settled symbols configuration
 SETTLED_USDT_PERP_SYMBOLS = {
-    'ICPUSDT': ['2022-06-10 09:00:00', '2022-09-27 02:30:00'],
-    'BNXUSDT': ['2023-02-11 04:00:00', '2023-02-22 22:45:00'],
-    'TLMUSDT': ['2022-06-09 23:59:00', '2023-03-30 12:30:00'],
-    'AERGOUSDT': ['2025-03-27 23:59:00', '2023-04-16 18:30:00'],
+    "ICPUSDT": ["2022-06-10 09:00:00", "2022-09-27 02:30:00"],
+    "BNXUSDT": ["2023-02-11 04:00:00", "2023-02-22 22:45:00"],
+    "TLMUSDT": ["2022-06-09 23:59:00", "2023-03-30 12:30:00"],
+    "AERGOUSDT": ["2025-03-27 23:59:00", "2023-04-16 18:30:00"],
 }
 
 SETTLED_USDT_SPOT_SYMBOLS = {
@@ -76,13 +81,22 @@ SETTLED_USDT_SPOT_SYMBOLS = {
     "STX-USDT": ["2024-07-03 23:00:00", "2024-07-05 00:00:00"],
     "TIA-USDT": ["2024-07-03 23:00:00", "2024-07-05 00:00:00"],
     "VEN-USDT": ["2024-07-03 23:00:00", "2024-07-05 00:00:00"],
-    "POND-USDT": ["2024-07-03 23:00:00", "2024-07-05 00:00:00"]
+    "POND-USDT": ["2024-07-03 23:00:00", "2024-07-05 00:00:00"],
 }
 
 # Delisted symbols
 usdt_perp_delist_symbol_set = {
-    '1000BTTCUSDT', 'CVCUSDT', 'DODOUSDT', 'RAYUSDT', 'SCUSDT', 'SRMUSDT', 
-    'LENDUSDT', 'NUUSDT', 'LUNAUSDT', 'YFIIUSDT', 'BTCSTUSDT'
+    "1000BTTCUSDT",
+    "CVCUSDT",
+    "DODOUSDT",
+    "RAYUSDT",
+    "SCUSDT",
+    "SRMUSDT",
+    "LENDUSDT",
+    "NUUSDT",
+    "LUNAUSDT",
+    "YFIIUSDT",
+    "BTCSTUSDT",
 }
 
 usdt_spot_blacklist = []
@@ -94,7 +108,7 @@ metrics_prefix = None  # Will be set dynamically
 SETTLED_SYMBOLS = None  # Will be set dynamically
 
 # Proxy configuration
-proxy = os.getenv('PROXY_URL', '')
+proxy = os.getenv("PROXY_URL", "")
 use_proxy_download_file = False
 file_proxy = proxy if use_proxy_download_file else None
 
@@ -108,7 +122,7 @@ thunder = True
 blind = False
 
 # Convert START_MONTH to START_DATE if specified
-GENESIS_TIME = pd.to_datetime('2009-01-03 00:00:00').tz_localize(tz=timezone.utc)
+GENESIS_TIME = pd.to_datetime("2009-01-03 00:00:00").tz_localize(tz=UTC)
 START_DATE = os.getenv("START_DATE", None)  # Format: "YYYY-MM-DD"
 START_MONTH = None
 if START_DATE:
@@ -123,12 +137,12 @@ daily_updated_set = set()
 
 # Flight server configuration
 FLIGHT_PORT = os.getenv("FLIGHT_PORT", "8815")
-REDUNDANCY_HOURS = int(os.getenv('REDUNDANCY_HOURS', 1))
-RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', 7))
+REDUNDANCY_HOURS = int(os.getenv("REDUNDANCY_HOURS", 1))
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", 7))
 if RETENTION_DAYS <= 0:
-    logger.warning('RETENTION_DAYS 必须大于 0，已强制设置为 7')
+    logger.warning("RETENTION_DAYS 必须大于 0,已强制设置为 7")
     RETENTION_DAYS = 7
 ENABLE_WS = os.getenv("ENABLE_WS", "false").lower() == "true"
 
 # Parquet file configuration
-PARQUET_FILE_PERIOD = int(os.getenv('PARQUET_FILE_PERIOD', 1))  # Days per parquet file
+PARQUET_FILE_PERIOD = int(os.getenv("PARQUET_FILE_PERIOD", 1))  # Days per parquet file
