@@ -1,12 +1,14 @@
+from datetime import *
 import glob
 import os
-from datetime import *
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.flight as flight
 
-from utils.config import SUFFIX, KLINE_INTERVAL_MINUTES, GENESIS_TIME
+from utils.config import GENESIS_TIME
+from utils.config import KLINE_INTERVAL_MINUTES
+from utils.config import SUFFIX
 from utils.db_manager import DatabaseManager
 from utils.log_kit import logger
 from utils.timer import timer
@@ -16,22 +18,26 @@ class FlightActions:
     def __init__(self, db_manager: DatabaseManager):
         self._db_manager = db_manager
         self.duck_time = {
-            'usdt_perp': self._duck_time('usdt_perp'),
-            'usdt_spot': self._duck_time('usdt_spot')
+            "usdt_perp": self._duck_time("usdt_perp"),
+            "usdt_spot": self._duck_time("usdt_spot"),
         }
 
     def _duck_time(self, market: str):
         """更新Parquet文件的最新时间"""
         max_time = GENESIS_TIME
         try:
-            result = self._db_manager.fetch_one(f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'")[0]
+            result = self._db_manager.fetch_one(
+                f"SELECT value FROM config_dict WHERE key = '{market}_duck_time'"
+            )[0]
             # ducktime自检，与当前时间的差值不能大于BASE_INERTVAL的495倍
-            if abs(pd.to_datetime(result).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)) > timedelta(days=30):
+            if abs(
+                pd.to_datetime(result).tz_localize(tz=timezone.utc) - datetime.now(tz=timezone.utc)
+            ) > timedelta(days=30):
                 logger.warning(f"{market} duck_time 自检失败，距离上次更新相差30天")
                 raise ValueError(f"{market} duck_time 自检失败，距离上次更新相差30天")
             max_time = pd.to_datetime(result).tz_localize(tz=timezone.utc)
             logger.info(f"{market}{SUFFIX} Ducktime已加载: {max_time}")
-        except Exception as e:
+        except Exception:
             logger.warning(f"未找到{market} duck_time")
         return max_time
 
@@ -46,18 +52,23 @@ class FlightActions:
 
 
 class FlightGets:
-
-    def __init__(self, db_manager: DatabaseManager, redundancy_hours: int = 1, pqt_path: str = "../data/pqt"):
+    def __init__(
+        self, db_manager: DatabaseManager, redundancy_hours: int = 1, pqt_path: str = "../data/pqt"
+    ):
         self._db_manager = db_manager
         self._redundancy_hours = redundancy_hours
         self._pqt_path = pqt_path
         self.pqt_time = {
-            'usdt_perp': self._pqt_time('usdt_perp'),
-            'usdt_spot': self._pqt_time('usdt_spot')
+            "usdt_perp": self._pqt_time("usdt_perp"),
+            "usdt_spot": self._pqt_time("usdt_spot"),
         }
 
         self.exginfo = {}
         self._init_exginfo()
+
+    def refresh_pqt_time(self):
+        self.pqt_time["usdt_perp"] = self._pqt_time("usdt_perp")
+        self.pqt_time["usdt_spot"] = self._pqt_time("usdt_spot")
 
     def _pqt_time(self, market: str):
         """更新Parquet文件的最新时间"""
@@ -68,10 +79,12 @@ class FlightGets:
                 sql = f"SELECT max(open_time) as max_time from read_parquet('{self._pqt_path}/{market}{SUFFIX}/*.parquet')"
                 result = self._db_manager.fetch_one(sql)[0]
                 max_time = pd.to_datetime(result).tz_localize(tz=timezone.utc)
-            except Exception as e:
+            except Exception:
                 logger.warning(f"未找到{market}{SUFFIX} Parquet文件中的最大时间")
-            self._db_manager.execute_write("INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
-                                           (f'{market}{SUFFIX}_pqt_time', str(max_time)))
+            self._db_manager.execute_write(
+                "INSERT OR REPLACE INTO config_dict (key, value) VALUES (?, ?)",
+                (f"{market}{SUFFIX}_pqt_time", str(max_time)),
+            )
             logger.info(f"{market}{SUFFIX} Parquet时间已更新: {max_time}")
         else:
             logger.warning(f"未找到{market}{SUFFIX} Parquet文件")
@@ -169,7 +182,8 @@ class FlightGets:
             recent_end = end + timedelta(hours=self._redundancy_hours)
 
             logger.info(
-                f"扩展查询范围: 历史数据({historical_begin} - {historical_end}), 近期数据({recent_begin} - {recent_end})")
+                f"扩展查询范围: 历史数据({historical_begin} - {historical_end}), 近期数据({recent_begin} - {recent_end})"
+            )
 
             # 检查是否有有效的时间范围
             has_historical = historical_begin < historical_end
@@ -205,7 +219,7 @@ class FlightGets:
 
             # 添加UNION ALL（如果需要合并）
             if has_historical and has_recent:
-                subquery += f"""
+                subquery += """
                 UNION ALL
                 """
 
@@ -245,16 +259,21 @@ class FlightGets:
             logger.error(f"混合查询失败: {e}")
             raise
 
-    def get_market(self, market, interval, offset,
-                   begin=None, end=None, **kwargs):
+    def get_market(self, market, interval, offset, begin=None, end=None, **kwargs):
         """获取市场信息"""
-        if market not in ['usdt_perp', 'usdt_spot']:
-            raise ValueError("Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'.")
+        if market not in ["usdt_perp", "usdt_spot"]:
+            raise ValueError(
+                "Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'."
+            )
         valid_interval = [i for i in range(interval, 61, interval) if (60 % i == 0)]
         if interval not in valid_interval:
-            raise ValueError(f"Unsupported interval. Supported intervals are: {valid_interval} minutes.")
+            raise ValueError(
+                f"Unsupported interval. Supported intervals are: {valid_interval} minutes."
+            )
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
-            raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
+            raise ValueError(
+                f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval."
+            )
         if begin is None:
             begin = datetime.now(tz=timezone.utc) - timedelta(days=90)
         elif isinstance(begin, str):
@@ -294,18 +313,22 @@ class FlightGets:
             end = datetime.now(tz=timezone.utc)
         elif isinstance(end, str):
             end = pd.to_datetime(end).tz_localize(tz=timezone.utc)
-        pass
 
-    def get_symbol(self, market, symbol, interval, offset,
-                   begin=None, end=None, **kwargs):
+    def get_symbol(self, market, symbol, interval, offset, begin=None, end=None, **kwargs):
         """获取symbol信息"""
-        if market not in ['usdt_perp', 'usdt_spot']:
-            raise ValueError("Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'.")
+        if market not in ["usdt_perp", "usdt_spot"]:
+            raise ValueError(
+                "Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'."
+            )
         valid_interval = [i for i in range(interval, 61, interval) if (60 % i == 0)]
         if interval not in valid_interval:
-            raise ValueError(f"Unsupported interval. Supported intervals are: {valid_interval} minutes.")
+            raise ValueError(
+                f"Unsupported interval. Supported intervals are: {valid_interval} minutes."
+            )
         if offset >= interval or offset % KLINE_INTERVAL_MINUTES != 0:
-            raise ValueError(f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval.")
+            raise ValueError(
+                f"Offset must be a multiple of {KLINE_INTERVAL_MINUTES} and less than the interval."
+            )
         if begin is None:
             begin = datetime.now(tz=timezone.utc) - timedelta(days=90)
         elif isinstance(begin, str):
@@ -345,8 +368,8 @@ class FlightGets:
 
             if not df.empty:
                 # 按market分组存储到内存
-                for market in df['market'].unique():
-                    market_data = df[df['market'] == market]
+                for market in df["market"].unique():
+                    market_data = df[df["market"] == market]
                     self.exginfo[market] = market_data
                     logger.info(f"成功加载 {market} 的exginfo数据: {len(market_data)} 条记录")
             else:
@@ -358,8 +381,10 @@ class FlightGets:
 
     def get_exginfo(self, market, **kwargs):
         """获取exginfo数据"""
-        if market not in ['usdt_perp', 'usdt_spot']:
-            raise ValueError("Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'.")
+        if market not in ["usdt_perp", "usdt_spot"]:
+            raise ValueError(
+                "Unsupported market type. Supported types are: 'usdt_perp', 'usdt_spot'."
+            )
 
         if market not in self.exginfo:
             raise ValueError(f"No exginfo data found for market: {market}")
@@ -376,7 +401,7 @@ class FlightGets:
     def _execute_query(self, query: str):
         """执行SQL查询并返回Arrow数据，增强错误处理和类型转换"""
         try:
-            with timer(f"执行查询:"):
+            with timer("执行查询:"):
                 table = self._db_manager.fetch_arrow_table(query)
             return flight.RecordBatchStream(table)
 
@@ -384,4 +409,3 @@ class FlightGets:
             logger.error(f"查询执行错误: {e}")
             logger.error(f"问题查询: {query}")
             raise
-

@@ -2,42 +2,48 @@
 """
 Flight服务器启动脚本
 """
-import sys
+
 import os
 import signal
+import sys
 
-from flight.flight_server import FlightServer
-from utils.config import FLIGHT_PORT, DUCKDB_DIR, PARQUET_DIR, ENABLE_WS
-from utils.db_manager import KlineDBManager
 from core.component.candle_fetcher import *
+from flight.flight_server import FlightServer
+from utils.config import DUCKDB_DIR
+from utils.config import ENABLE_WS
+from utils.config import FLIGHT_PORT
+from utils.config import PARQUET_DIR
+from utils.db_manager import KlineDBManager
+
 
 # 设置时区为UTC
-os.environ['TZ'] = 'UTC'
+os.environ["TZ"] = "UTC"
+
 
 def signal_handler(signum, frame):
     """处理退出信号"""
     logger.critical("Received exit signal, shutting down...")
     server.db_manager.close()
     sys.exit(0)
-    
+
 
 if __name__ == "__main__":
     """启动Flight服务器"""
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # 读取端口
     port = FLIGHT_PORT
     location = f"grpc://0.0.0.0:{port}"
-    
+
     try:
         # 创建并启动服务器
         # 全局数据库连接
         duckdb_dir = DUCKDB_DIR
         pqt_dir = PARQUET_DIR
         logger.info(f"Using Parquet directory: {pqt_dir}")
-        
+
         # 创建数据库管理器
         global db_manager
         if duckdb_dir:
@@ -45,9 +51,11 @@ if __name__ == "__main__":
         else:
             db_manager = KlineDBManager(database_path=None)
 
-        server = FlightServer(location=location, db_manager=db_manager, pqt_path=pqt_dir, ws_mode=ENABLE_WS)
+        server = FlightServer(
+            location=location, db_manager=db_manager, pqt_path=pqt_dir, ws_mode=ENABLE_WS
+        )
         server.serve()
-        
+
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt detected, shutting down server...")
     except Exception as e:

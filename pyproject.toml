@@ -1,0 +1,136 @@
+[project]
+name = "duckport-binance"
+version = "2.1.0"
+description = "基于Arrow Flight协议的加密货币K线数据服务"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiofiles>=23.0.0",
+  "aiohttp>=3.8.0",
+  "apscheduler>=3.10.0",
+  "cachetools>=5.5.0",
+  "colorama>=0.4.6",
+  "duckdb>=1.4.2",
+  "joblib>=1.5.2",
+  "loguru>=0.7.3",
+  "lxml>=4.9.0",
+  "numpy>=2.0.2",
+  "pandas>=2.2.3,<3.0.0",
+  "pyarrow>=14.0.0",
+  "python-dateutil>=2.8.0",
+  "python-dotenv>=1.2.1",
+  "pytz>=2025.2",
+  "tqdm>=4.67.1",
+  "websockets>=15.0.1",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+exclude = [
+  ".benchmarks",
+  ".eggs",
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".venv",
+  "build",
+  "dist",
+  "venv",
+]
+
+[tool.ruff.lint]
+select = [
+  "C4",
+  "E",
+  "F",
+  "W",
+  "C90",
+  "D",
+  "DTZ",
+  "UP",
+  "S",
+  "T10",
+  "ICN",
+  "PIE",
+  "PT",
+  "PYI",
+  "Q",
+  # "I",  # Disabled - using isort instead
+  "RSE",
+  "TID",
+  "SIM",  # flake8-simplify
+  "B",    # flake8-bugbear
+  "PERF", # Perflint
+  "FURB", # refurb
+  "ISC",  # flake8-implicit-str-concat
+  "FLY",  # flynt
+  "LOG",  # flake8-logging
+  # "ARG",  # unused-arguments - 301 violations
+  # "ERA",  # eradicate - 165 violations
+  # "ASYNC",  # flake8-async - 15 violations (5 ASYNC110 busy-wait, 10 ASYNC109 timeout params)
+  "PD",
+  "PGH",
+  # "PLW",
+  "NPY",
+  "RUF",
+]
+
+ignore = [
+  "D100",    # Missing docstring in public module  **fix**
+  "D101",
+  "D102",    # Missing docstring in public method  **fix**
+  "D103",    # Missing docstring in public function  **fix**
+  "D104",    # Missing docstring in public package  **fix**
+  "D107",
+  "D105",
+  "D200",    # One-line docstring should fit on one line with quotes (optional style)
+  "D203",    # 1 blank line required before class docstring (optional style)
+  "D205",    # 1 blank line required between summary line and description (optional style)
+  "D212",    # Multi-line docstring summary should start at the first line (optional style)
+  "D400",    # First line should end with a period (not always a first line)
+  "D413",    # Missing blank line after last section ('Parameters')
+  "D415",    # First line should end with a period, question mark, or exclamation point (not always a first line)
+  "D416",    # Section name should end with a colon ('Warnings:', not 'Warnings') (incorrect?)
+  "DTZ001",  # datetime.datetime.now() is deprecated, use datetime.now(tz=timezone.utc) instead
+  "DTZ005",  # datetime.datetime.now() is deprecated, use datetime.now(tz=timezone.utc) instead
+  "E501",    # Line too long (will lint separately)
+  "E741",    # Ambiguous variable name (single char)
+  "FURB166", # int() on sliced str (explicit base is clearer than auto-detection)
+  "PERF401", # manual-list-comprehension (16 violations - fix incrementally)
+  "PERF402", # manual-list-copy (3 violations - fix incrementally)
+  "PT007",   # pytest-parametrize-values-wrong-type (1621 violations - deferred)
+  "PT011",   # Exception type too broad (needs to be fixed case-by-case)
+  "PT014",   # Use list comprehensions (not always readable or appropriate)
+  "PT017",   # pytest-assert-in-except (1 violation - fix later)
+  "PT028",   # pytest-parameter-with-default-argument (4 violations - fix later)
+  "PYI021",  # Docstrings should not be included in stubs (OK as this is the natural place for them)
+  "PGH003",  # Blanket type-ignore (TODO: make these specific incrementally)
+  "RUF012",  # Mutable class attributes should be annotated with `typing.ClassVar`
+  "RUF059",  # Unpacked variable is never used (can still be clearer than a discard in some cases)
+  "S101",    # Use of assert detected (OK in test suite, production violations to fix incrementally)
+  "SIM108",  # Use ternary operator instead of if-else-block (opinionated style)
+  "B017",    # pytest.raises(Exception) is too broad (we need broad catches for now)
+  "B018",    # Useless expression (OK in notebooks for displaying figures)
+  "B008",    # Function call in default argument (OK for immutable objects like pd.Timedelta, Money)
+  "B024",    # Abstract class without abstract methods (intentional for base class pattern)
+  "B904",    # raise without from clause (fix later for better exception chaining)
+]
+
+# Allow autofix for all enabled rules (when `--fix`) is provided
+fixable = ["ALL"]
+
+unfixable = ["E4", "E501", "UP006", "UP035"]
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.isort]
+force-single-line = true
+lines-after-imports = 2
+split-on-trailing-comma = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
