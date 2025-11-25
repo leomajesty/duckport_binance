@@ -112,7 +112,7 @@ python loadhist.py
 ### 1. 启动服务器
 
 ```bash
-python start_server.py
+uv run start_server.py
 ```
 
 服务器将在 `grpc://0.0.0.0:8815` 启动。
@@ -120,7 +120,7 @@ python start_server.py
 ### 2. 运行客户端示例
 
 ```bash
-python start_server.py
+uv run start_server.py
 ```
 
 ## 服务器功能

@@ -14,10 +14,10 @@ uv sync
 source .venv/bin/activate
 
 # Load historical data (required before first server start)
-python loadhist.py
+uv run loadhist.py
 
 # Start the Flight server
-python start_server.py
+uv run start_server.py
 
 # Lint code
 uv run ruff check .

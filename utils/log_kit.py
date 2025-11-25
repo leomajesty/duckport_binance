@@ -117,7 +117,7 @@ class SimonsConsoleHandler(logging.StreamHandler):
 
 # noinspection PyProtectedMember
 class SimonsLogger:
-    _instance = dict()
+    _instance = {}
 
     def __new__(cls, name="Log"):
         if cls._instance.get(name) is None:

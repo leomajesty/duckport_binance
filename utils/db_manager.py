@@ -1,8 +1,6 @@
 import os
 import threading
 from typing import Any
-from typing import Dict
-from typing import List
 
 import duckdb
 import pandas as pd
@@ -23,17 +21,17 @@ dtypes_dict = {
 
 class DatabaseManager:
     """
-    数据库连接管理器，确保线程安全的数据库操作
+    数据库连接管理器, 确保线程安全的数据库操作
     使用锁机制保证同一时间只有一个查询或写入操作
     """
 
-    def __init__(self, database_path: str = None, new: bool = False):
+    def __init__(self, database_path: str | None = None, new: bool = False):
         """
         初始化数据库管理器
 
         Args:
-            database_path: 数据库文件路径，None表示内存数据库
-            read_only: 是否只读模式
+            database_path: 数据库文件路径, None 表示内存数据库
+            new: 是否创建新数据库 (删除已存在的数据库文件)
         """
         self.database_path = database_path
         self._lock = threading.Lock()
@@ -70,12 +68,12 @@ class DatabaseManager:
             logger.error(f"数据库连接失败: {e}")
             raise
 
-    def execute_query(self, query: str, params: tuple = None) -> Any:
+    def execute_query(self, query: str, params: tuple | None = None) -> Any:
         """
-        执行查询操作（线程安全）
+        执行查询操作 (线程安全)
 
         Args:
-            query: SQL查询语句
+            query: SQL 查询语句
             params: 查询参数
 
         Returns:
@@ -96,15 +94,15 @@ class DatabaseManager:
                 raise
 
     def execute_write(
-        self, query: str, params: tuple = None, df: pd.DataFrame = pd.DataFrame()
+        self, query: str, params: tuple | None = None, df: pd.DataFrame | None = None
     ) -> Any:
         """
-        执行写入操作（线程安全）
+        执行写入操作 (线程安全)
 
         Args:
-            query: SQL写入语句
+            query: SQL 写入语句
             params: 写入参数
-            df: DataFrame对象
+            df: DataFrame 对象
         Returns:
             写入结果
         """
@@ -120,16 +118,16 @@ class DatabaseManager:
                 logger.error(f"问题写入: {query}")
                 if params:
                     logger.error(f"写入参数: {params}")
-                if not df.empty:
+                if df is not None and not df.empty:
                     logger.error(f"写入DataFrame: {df.head()}")
                 raise
 
-    def execute_transaction(self, queries: List[Dict[str, Any]]) -> bool:
+    def execute_transaction(self, queries: list[dict[str, Any]]) -> bool:
         """
-        执行事务操作（线程安全）
+        执行事务操作 (线程安全)
 
         Args:
-            queries: 查询列表，每个查询包含 'query'、'params' 和可选的 'df' 键
+            queries: 查询列表, 每个查询包含 'query', 'params' 和可选的 'df' 键
 
         Returns:
             事务是否成功
@@ -142,12 +140,10 @@ class DatabaseManager:
                 for query_info in queries:
                     query = query_info["query"]
                     params = query_info.get("params")
-                    df = query_info.get("df")
 
                     if params:
                         self._connection.execute(query, params)
                     else:
-                        # 都没有的情况
                         self._connection.execute(query)
 
                 # 提交事务
@@ -166,16 +162,16 @@ class DatabaseManager:
                 logger.error(f"事务执行失败: {e}")
                 return False
 
-    def fetch_arrow_table(self, query: str, params: tuple = None):
+    def fetch_arrow_table(self, query: str, params: tuple | None = None):
         """
-        执行查询并返回Arrow表（线程安全）
+        执行查询并返回 Arrow 表 (线程安全)
 
         Args:
-            query: SQL查询语句
+            query: SQL 查询语句
             params: 查询参数
 
         Returns:
-            Arrow表对象
+            Arrow 表对象
         """
         with self._lock:
             try:
@@ -197,16 +193,16 @@ class DatabaseManager:
                     logger.error(f"查询参数: {params}")
                 raise
 
-    def fetch_df(self, query: str, params: tuple = None):
+    def fetch_df(self, query: str, params: tuple | None = None):
         """
-        执行查询并返回DataFrame（线程安全）
+        执行查询并返回 DataFrame (线程安全)
 
         Args:
-            query: SQL查询语句
+            query: SQL 查询语句
             params: 查询参数
 
         Returns:
-            DataFrame对象
+            DataFrame 对象
         """
         with self._lock:
             try:
@@ -222,12 +218,12 @@ class DatabaseManager:
                     logger.error(f"查询参数: {params}")
                 raise
 
-    def fetch_one(self, query: str, params: tuple = None):
+    def fetch_one(self, query: str, params: tuple | None = None):
         """
-        执行查询并返回单行结果（线程安全）
+        执行查询并返回单行结果 (线程安全)
 
         Args:
-            query: SQL查询语句
+            query: SQL 查询语句
             params: 查询参数
 
         Returns:
@@ -247,12 +243,12 @@ class DatabaseManager:
                     logger.error(f"查询参数: {params}")
                 raise
 
-    def fetch_all(self, query: str, params: tuple = None):
+    def fetch_all(self, query: str, params: tuple | None = None):
         """
-        执行查询并返回所有结果（线程安全）
+        执行查询并返回所有结果 (线程安全)
 
         Args:
-            query: SQL查询语句
+            query: SQL 查询语句
             params: 查询参数
 
         Returns:
@@ -288,7 +284,7 @@ class DatabaseManager:
 
 
 class KlineDBManager(DatabaseManager):
-    def __init__(self, database_path: str = None, new: bool = False):
+    def __init__(self, database_path: str | None = None, new: bool = False):
         super().__init__(database_path, new)
         self._init_database()
         divider("数据库已启动")
@@ -370,7 +366,7 @@ class KlineDBManager(DatabaseManager):
             # 比较配置一致性
             if stored_interval != KLINE_INTERVAL:
                 error_msg = (
-                    f"k线周期配置不一致！配置文件: {KLINE_INTERVAL}, 数据库: {stored_interval}"
+                    f"k线周期配置不一致! 配置文件: {KLINE_INTERVAL}, 数据库: {stored_interval}"
                 )
                 logger.error(error_msg)
                 logger.error("请检查配置文件或清理数据库后重新启动系统")
@@ -380,7 +376,7 @@ class KlineDBManager(DatabaseManager):
 
         except Exception as e:
             logger.error(f"k线周期配置一致性验证失败: {e}")
-            logger.error("系统将退出，请检查配置后重新启动")
+            logger.error("系统将退出, 请检查配置后重新启动")
             import sys
 
             sys.exit(1)

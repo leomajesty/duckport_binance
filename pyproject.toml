@@ -1,7 +1,7 @@
 [project]
 name = "duckport-binance"
-version = "0.1.0"
-description = "Add your description here"
+version = "2.1.0"
+description = "基于Arrow Flight协议的加密货币K线数据服务"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -94,6 +94,8 @@ ignore = [
   "D413",    # Missing blank line after last section ('Parameters')
   "D415",    # First line should end with a period, question mark, or exclamation point (not always a first line)
   "D416",    # Section name should end with a colon ('Warnings:', not 'Warnings') (incorrect?)
+  "DTZ001",  # datetime.datetime.now() is deprecated, use datetime.now(tz=timezone.utc) instead
+  "DTZ005",  # datetime.datetime.now() is deprecated, use datetime.now(tz=timezone.utc) instead
   "E501",    # Line too long (will lint separately)
   "E741",    # Ambiguous variable name (single char)
   "FURB166", # int() on sliced str (explicit base is clearer than auto-detection)
@@ -129,7 +131,6 @@ force-single-line = true
 lines-after-imports = 2
 split-on-trailing-comma = true
 force-sort-within-sections = true
-known-first-party = ["nautilus_trader"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
