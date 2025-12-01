@@ -24,23 +24,43 @@ class DatabaseManager:
     3. DuckDB 内部使用 MVCC 处理并发控制，无需应用层加锁
     4. 读写操作完全并发，性能最优
 
+    可选并发控制（类似 MySQL 连接池）：
+    - 虽然 DuckDB 是嵌入式数据库，不需要传统连接池
+    - 但在高并发场景下，可以启用 Semaphore 限制并发查询数
+    - 防止过多并发导致内存/CPU 资源耗尽
+
     参考文档: https://duckdb.org/docs/stable/guides/python/multiple_threads
     """
 
-    def __init__(self, database_path: str = None, new: bool = False):
+    def __init__(self, database_path: str = None, new: bool = False, max_concurrent: int = None):
         """
         初始化数据库管理器
 
         Args:
             database_path: 数据库文件路径，None表示内存数据库
             new: 是否删除旧数据库重新创建
+            max_concurrent: 最大并发查询数，None表示不限制（默认）
+                          类似 MySQL 连接池的 max_connections
+                          推荐值：5-20，根据系统资源调整
         """
         self.database_path = database_path
+        self.max_concurrent = max_concurrent
         self._connection = None
         self._thread_local = threading.local()  # 线程本地存储
+
+        # 并发控制（可选）
+        self._semaphore = threading.Semaphore(max_concurrent) if max_concurrent else None
+        self._active_queries = 0
+        self._total_queries = 0
+        self._wait_count = 0
+        self._stats_lock = threading.Lock()
+
         if new:
             self.destroy_all()
         self._init_connection()
+
+        if max_concurrent:
+            logger.info(f"✓ 并发控制已启用: 最大并发查询数 = {max_concurrent}")
 
     def destroy_all(self):
         if self.database_path and os.path.exists(self.database_path):
@@ -85,12 +105,72 @@ class DatabaseManager:
             self._thread_local.cursor = self._connection.cursor()
             logger.debug(f"为线程 {threading.current_thread().name} 创建新 cursor")
         return self._thread_local.cursor
+
+    def _acquire_query_slot(self):
+        """
+        获取查询槽位（如果启用了并发控制）
+        类似从 MySQL 连接池获取连接
+        """
+        if self._semaphore:
+            with self._stats_lock:
+                self._wait_count += 1
+                waiting = self._wait_count
+            logger.debug(f"[{threading.current_thread().name}] 等待查询槽位 (等待中: {waiting})")
+            self._semaphore.acquire()
+            with self._stats_lock:
+                self._active_queries += 1
+                self._total_queries += 1
+                self._wait_count -= 1
+                active = self._active_queries
+            logger.debug(f"[{threading.current_thread().name}] 获得查询槽位 (活跃: {active}/{self.max_concurrent})")
+
+    def _release_query_slot(self):
+        """
+        释放查询槽位（如果启用了并发控制）
+        类似归还 MySQL 连接到连接池
+        """
+        if self._semaphore:
+            with self._stats_lock:
+                self._active_queries -= 1
+                active = self._active_queries
+            self._semaphore.release()
+            logger.debug(f"[{threading.current_thread().name}] 释放查询槽位 (活跃: {active}/{self.max_concurrent})")
+
+    def get_concurrency_stats(self) -> Dict[str, int]:
+        """
+        获取并发统计信息
+
+        Returns:
+            包含以下信息的字典:
+            - max_concurrent: 最大并发数限制
+            - active_queries: 当前活跃查询数
+            - total_queries: 总查询数
+            - waiting_queries: 等待中的查询数
+        """
+        if not self._semaphore:
+            return {
+                'max_concurrent': None,
+                'active_queries': 0,
+                'total_queries': 0,
+                'waiting_queries': 0,
+                'enabled': False
+            }
+
+        with self._stats_lock:
+            return {
+                'max_concurrent': self.max_concurrent,
+                'active_queries': self._active_queries,
+                'total_queries': self._total_queries,
+                'waiting_queries': self._wait_count,
+                'enabled': True
+            }
     
     def execute_query(self, query: str, params: tuple = None) -> Any:
         """
-        执行查询操作（线程安全，无锁并发）
+        执行查询操作（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
+        如果启用了 max_concurrent，则限制并发查询数
 
         Args:
             query: SQL查询语句
@@ -99,6 +179,7 @@ class DatabaseManager:
         Returns:
             查询结果
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             if params:
@@ -112,12 +193,15 @@ class DatabaseManager:
             if params:
                 logger.error(f"查询参数: {params}")
             raise
+        finally:
+            self._release_query_slot()
     
     def execute_write(self, query: str, params: tuple = None, df: pd.DataFrame = pd.DataFrame()) -> Any:
         """
-        执行写入操作（线程安全，无锁并发）
+        执行写入操作（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
+        如果启用了 max_concurrent，则限制并发写入数
 
         Args:
             query: SQL写入语句
@@ -127,6 +211,7 @@ class DatabaseManager:
         Returns:
             写入结果
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             # 关键：让 df 在当前作用域中可见，DuckDB 可以通过 FROM df 访问
@@ -143,12 +228,15 @@ class DatabaseManager:
             if not df.empty:
                 logger.error(f"写入DataFrame: {df.head()}")
             raise
+        finally:
+            self._release_query_slot()
     
     def execute_transaction(self, queries: List[Dict[str, Any]]) -> bool:
         """
-        执行事务操作（线程安全，无锁并发）
+        执行事务操作（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
+        整个事务占用一个查询槽位
 
         Args:
             queries: 查询列表，每个查询包含 'query'、'params' 和可选的 'df' 键
@@ -156,6 +244,7 @@ class DatabaseManager:
         Returns:
             事务是否成功
         """
+        self._acquire_query_slot()
         cursor = self._get_cursor()
         try:
             # 开始事务
@@ -186,10 +275,12 @@ class DatabaseManager:
 
             logger.error(f"事务执行失败: {e}")
             return False
+        finally:
+            self._release_query_slot()
     
     def fetch_arrow_table(self, query: str, params: tuple = None):
         """
-        执行查询并返回Arrow表（线程安全，无锁并发）
+        执行查询并返回Arrow表（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
 
@@ -200,6 +291,7 @@ class DatabaseManager:
         Returns:
             Arrow表对象
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             if params:
@@ -221,10 +313,12 @@ class DatabaseManager:
             if params:
                 logger.error(f"查询参数: {params}")
             raise
+        finally:
+            self._release_query_slot()
     
     def fetch_df(self, query: str, params: tuple = None):
         """
-        执行查询并返回DataFrame（线程安全，无锁并发）
+        执行查询并返回DataFrame（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
 
@@ -235,6 +329,7 @@ class DatabaseManager:
         Returns:
             DataFrame对象
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             if params:
@@ -248,10 +343,12 @@ class DatabaseManager:
             if params:
                 logger.error(f"查询参数: {params}")
             raise
+        finally:
+            self._release_query_slot()
 
     def fetch_one(self, query: str, params: tuple = None):
         """
-        执行查询并返回单行结果（线程安全，无锁并发）
+        执行查询并返回单行结果（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
 
@@ -262,6 +359,7 @@ class DatabaseManager:
         Returns:
             单行结果
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             if params:
@@ -275,10 +373,12 @@ class DatabaseManager:
             if params:
                 logger.error(f"查询参数: {params}")
             raise
+        finally:
+            self._release_query_slot()
 
     def fetch_all(self, query: str, params: tuple = None):
         """
-        执行查询并返回所有结果（线程安全，无锁并发）
+        执行查询并返回所有结果（线程安全，可选并发控制）
 
         使用线程本地 cursor，DuckDB 内部处理并发控制
 
@@ -289,6 +389,7 @@ class DatabaseManager:
         Returns:
             所有结果
         """
+        self._acquire_query_slot()
         try:
             cursor = self._get_cursor()
             if params:
@@ -302,6 +403,8 @@ class DatabaseManager:
             if params:
                 logger.error(f"查询参数: {params}")
             raise
+        finally:
+            self._release_query_slot()
     
     def close(self):
         """关闭数据库连接"""
@@ -319,8 +422,16 @@ class DatabaseManager:
 
 class KlineDBManager(DatabaseManager):
 
-    def __init__(self, database_path: str = None, new: bool = False):
-        super().__init__(database_path, new)
+    def __init__(self, database_path: str = None, new: bool = False, max_concurrent: int = None):
+        """
+        初始化 Kline 数据库管理器
+
+        Args:
+            database_path: 数据库文件路径
+            new: 是否重新创建数据库
+            max_concurrent: 最大并发查询数（可选）
+        """
+        super().__init__(database_path, new, max_concurrent)
         self._init_database()
         divider("数据库已启动")
 
