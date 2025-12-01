@@ -43,6 +43,9 @@ CONCURRENCY = int(os.getenv('CONCURRENCY', 2))
 FETCH_CONCURRENCY = min(CONCURRENCY, 10)
 DUCKDB_THREAD = min(CONCURRENCY, 8)
 DUCKDB_MEMORY = os.getenv('DUCKDB_MEMORY', '2GB')
+# Data source configuration
+DATA_SOURCES_STR = os.getenv('DATA_SOURCES', 'usdt_perp,usdt_spot')
+DATA_SOURCES = set(s.strip() for s in DATA_SOURCES_STR.split(','))
 
 # Factory functions to create asyncio primitives at runtime within an active event loop
 def create_download_semaphore() -> asyncio.Semaphore:
