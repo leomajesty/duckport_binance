@@ -6,7 +6,7 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 
-from utils.config import SUFFIX, KLINE_INTERVAL, DUCKDB_THREAD, DUCKDB_MEMORY
+from utils.config import SUFFIX, KLINE_INTERVAL, DUCKDB_THREAD, DUCKDB_MEMORY, DATA_SOURCES
 from utils.log_kit import logger, divider
 
 dtypes_dict = {
@@ -17,23 +17,50 @@ dtypes_dict = {
 class DatabaseManager:
     """
     数据库连接管理器，确保线程安全的数据库操作
-    使用锁机制保证同一时间只有一个查询或写入操作
+
+    优化策略（符合 DuckDB 官方推荐）：
+    1. 使用线程本地存储 (thread-local) cursor
+    2. 每个线程通过 .cursor() 创建独立的连接
+    3. DuckDB 内部使用 MVCC 处理并发控制，无需应用层加锁
+    4. 读写操作完全并发，性能最优
+
+    可选并发控制（类似 MySQL 连接池）：
+    - 虽然 DuckDB 是嵌入式数据库，不需要传统连接池
+    - 但在高并发场景下，可以启用 Semaphore 限制并发查询数
+    - 防止过多并发导致内存/CPU 资源耗尽
+
+    参考文档: https://duckdb.org/docs/stable/guides/python/multiple_threads
     """
-    
-    def __init__(self, database_path: str = None, new: bool = False):
+
+    def __init__(self, database_path: str = None, new: bool = False, max_concurrent: int = None):
         """
         初始化数据库管理器
-        
+
         Args:
             database_path: 数据库文件路径，None表示内存数据库
-            read_only: 是否只读模式
+            new: 是否删除旧数据库重新创建
+            max_concurrent: 最大并发查询数，None表示不限制（默认）
+                          类似 MySQL 连接池的 max_connections
+                          推荐值：5-20，根据系统资源调整
         """
         self.database_path = database_path
-        self._lock = threading.Lock()
+        self.max_concurrent = max_concurrent
         self._connection = None
+        self._thread_local = threading.local()  # 线程本地存储
+
+        # 并发控制（可选）
+        self._semaphore = threading.Semaphore(max_concurrent) if max_concurrent else None
+        self._active_queries = 0
+        self._total_queries = 0
+        self._wait_count = 0
+        self._stats_lock = threading.Lock()
+
         if new:
             self.destroy_all()
         self._init_connection()
+
+        if max_concurrent:
+            logger.info(f"✓ 并发控制已启用: 最大并发查询数 = {max_concurrent}")
 
     def destroy_all(self):
         if self.database_path and os.path.exists(self.database_path):
@@ -45,221 +72,339 @@ class DatabaseManager:
                 raise
 
     def _init_connection(self):
-        """初始化数据库连接"""
+        """
+        初始化数据库连接
+        """
         try:
+            # 通过 config 参数设置
+            config = {
+                'timezone': 'UTC',
+                'threads': DUCKDB_THREAD,
+                'memory_limit': DUCKDB_MEMORY
+            }
+
             if self.database_path:
-                self._connection = duckdb.connect(database=self.database_path, read_only=False, config={'timezone': 'UTC'})
+                self._connection = duckdb.connect(database=self.database_path, read_only=False, config=config)
                 logger.info(f"Using DuckDB directory: {self.database_path}")
             else:
-                self._connection = duckdb.connect(database=':memory:', read_only=False, config={'timezone': 'UTC'})
+                self._connection = duckdb.connect(database=':memory:', read_only=False, config=config)
                 logger.info("Using in-memory DuckDB")
-            self._connection.execute(f"SET threads = {DUCKDB_THREAD};")
-            self._connection.execute(f"SET memory_limit = '{DUCKDB_MEMORY}';")
+
+            logger.info(f"DuckDB 配置: threads={DUCKDB_THREAD}, memory_limit={DUCKDB_MEMORY}")
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
             raise
+
+    def _get_cursor(self):
+        """
+        获取线程本地 cursor
+        Returns:
+            DuckDB cursor 对象
+        """
+        if not hasattr(self._thread_local, 'cursor'):
+            self._thread_local.cursor = self._connection.cursor()
+            logger.debug(f"为线程 {threading.current_thread().name} 创建新 cursor")
+        return self._thread_local.cursor
+
+    def _acquire_query_slot(self):
+        """
+        获取查询槽位（如果启用了并发控制）
+        类似从 MySQL 连接池获取连接
+        """
+        if self._semaphore:
+            with self._stats_lock:
+                self._wait_count += 1
+                waiting = self._wait_count
+            logger.debug(f"[{threading.current_thread().name}] 等待查询槽位 (等待中: {waiting})")
+            self._semaphore.acquire()
+            with self._stats_lock:
+                self._active_queries += 1
+                self._total_queries += 1
+                self._wait_count -= 1
+                active = self._active_queries
+            logger.debug(f"[{threading.current_thread().name}] 获得查询槽位 (活跃: {active}/{self.max_concurrent})")
+
+    def _release_query_slot(self):
+        """
+        释放查询槽位（如果启用了并发控制）
+        类似归还 MySQL 连接到连接池
+        """
+        if self._semaphore:
+            with self._stats_lock:
+                self._active_queries -= 1
+                active = self._active_queries
+            self._semaphore.release()
+            logger.debug(f"[{threading.current_thread().name}] 释放查询槽位 (活跃: {active}/{self.max_concurrent})")
+
+    def get_concurrency_stats(self) -> Dict[str, int]:
+        """
+        获取并发统计信息
+
+        Returns:
+            包含以下信息的字典:
+            - max_concurrent: 最大并发数限制
+            - active_queries: 当前活跃查询数
+            - total_queries: 总查询数
+            - waiting_queries: 等待中的查询数
+        """
+        if not self._semaphore:
+            return {
+                'max_concurrent': None,
+                'active_queries': 0,
+                'total_queries': 0,
+                'waiting_queries': 0,
+                'enabled': False
+            }
+
+        with self._stats_lock:
+            return {
+                'max_concurrent': self.max_concurrent,
+                'active_queries': self._active_queries,
+                'total_queries': self._total_queries,
+                'waiting_queries': self._wait_count,
+                'enabled': True
+            }
     
     def execute_query(self, query: str, params: tuple = None) -> Any:
         """
-        执行查询操作（线程安全）
-        
+        执行查询操作（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+        如果启用了 max_concurrent，则限制并发查询数
+
         Args:
             query: SQL查询语句
             params: 查询参数
-            
+
         Returns:
             查询结果
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                return result
-            except Exception as e:
-                logger.error(f"查询执行失败: {e}")
-                logger.error(f"问题查询: {query}")
-                if params:
-                    logger.error(f"查询参数: {params}")
-                raise
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            return result
+        except Exception as e:
+            logger.error(f"查询执行失败: {e}")
+            logger.error(f"问题查询: {query}")
+            if params:
+                logger.error(f"查询参数: {params}")
+            raise
+        finally:
+            self._release_query_slot()
     
     def execute_write(self, query: str, params: tuple = None, df: pd.DataFrame = pd.DataFrame()) -> Any:
         """
-        执行写入操作（线程安全）
-        
+        执行写入操作（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+        如果启用了 max_concurrent，则限制并发写入数
+
         Args:
             query: SQL写入语句
             params: 写入参数
             df: DataFrame对象
+
         Returns:
             写入结果
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                return result
-            except Exception as e:
-                logger.error(f"写入执行失败: {e}")
-                logger.error(f"问题写入: {query}")
-                if params:
-                    logger.error(f"写入参数: {params}")
-                if not df.empty:
-                    logger.error(f"写入DataFrame: {df.head()}")
-                raise
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            # 关键：让 df 在当前作用域中可见，DuckDB 可以通过 FROM df 访问
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            return result
+        except Exception as e:
+            logger.error(f"写入执行失败: {e}")
+            logger.error(f"问题写入: {query}")
+            if params:
+                logger.error(f"写入参数: {params}")
+            if not df.empty:
+                logger.error(f"写入DataFrame: {df.head()}")
+            raise
+        finally:
+            self._release_query_slot()
     
     def execute_transaction(self, queries: List[Dict[str, Any]]) -> bool:
         """
-        执行事务操作（线程安全）
-        
+        执行事务操作（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+        整个事务占用一个查询槽位
+
         Args:
             queries: 查询列表，每个查询包含 'query'、'params' 和可选的 'df' 键
-            
+
         Returns:
             事务是否成功
         """
-        with self._lock:
+        self._acquire_query_slot()
+        cursor = self._get_cursor()
+        try:
+            # 开始事务
+            cursor.execute("BEGIN TRANSACTION")
+
+            for query_info in queries:
+                query = query_info['query']
+                params = query_info.get('params')
+                df = query_info.get('df')  # 关键：DuckDB 会在当前作用域查找 df 变量
+
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+
+            # 提交事务
+            cursor.execute("COMMIT")
+            logger.info("事务执行成功")
+            return True
+
+        except Exception as e:
+            # 回滚事务
             try:
-                # 开始事务
-                self._connection.execute("BEGIN TRANSACTION")
-                
-                for query_info in queries:
-                    query = query_info['query']
-                    params = query_info.get('params')
-                    df = query_info.get('df')
-                    
-                    if params:
-                        self._connection.execute(query, params)
-                    else:
-                        # 都没有的情况
-                        self._connection.execute(query)
-                
-                # 提交事务
-                self._connection.execute("COMMIT")
-                logger.info("事务执行成功")
-                return True
-                
-            except Exception as e:
-                # 回滚事务
-                try:
-                    self._connection.execute("ROLLBACK")
-                    logger.info("事务已回滚")
-                except Exception as rollback_error:
-                    logger.error(f"事务回滚失败: {rollback_error}")
-                
-                logger.error(f"事务执行失败: {e}")
-                return False
+                cursor.execute("ROLLBACK")
+                logger.info("事务已回滚")
+            except Exception as rollback_error:
+                logger.error(f"事务回滚失败: {rollback_error}")
+
+            logger.error(f"事务执行失败: {e}")
+            return False
+        finally:
+            self._release_query_slot()
     
     def fetch_arrow_table(self, query: str, params: tuple = None):
         """
-        执行查询并返回Arrow表（线程安全）
-        
+        执行查询并返回Arrow表（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+
         Args:
             query: SQL查询语句
             params: 查询参数
-            
+
         Returns:
             Arrow表对象
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                table = result.fetch_arrow_table()
-                for col, dtype in dtypes_dict.items():
-                    if col in table.column_names and table.schema.field(col).type != dtype:
-                        table = table.set_column(
-                            table.schema.get_field_index(col),
-                            col,
-                            table[col].cast(dtype)
-                        )
-                return table
-            except Exception as e:
-                logger.error(f"Arrow表查询失败: {e}")
-                logger.error(f"问题查询: {query}")
-                if params:
-                    logger.error(f"查询参数: {params}")
-                raise
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            table = result.fetch_arrow_table()
+            for col, dtype in dtypes_dict.items():
+                if col in table.column_names and table.schema.field(col).type != dtype:
+                    table = table.set_column(
+                        table.schema.get_field_index(col),
+                        col,
+                        table[col].cast(dtype)
+                    )
+            return table
+        except Exception as e:
+            logger.error(f"Arrow表查询失败: {e}")
+            logger.error(f"问题查询: {query}")
+            if params:
+                logger.error(f"查询参数: {params}")
+            raise
+        finally:
+            self._release_query_slot()
     
     def fetch_df(self, query: str, params: tuple = None):
         """
-        执行查询并返回DataFrame（线程安全）
-        
+        执行查询并返回DataFrame（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+
         Args:
             query: SQL查询语句
             params: 查询参数
-            
+
         Returns:
             DataFrame对象
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                return result.fetchdf()
-            except Exception as e:
-                logger.error(f"DataFrame查询失败: {e}")
-                logger.error(f"问题查询: {query}")
-                if params:
-                    logger.error(f"查询参数: {params}")
-                raise
-    
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            return result.fetchdf()
+        except Exception as e:
+            logger.error(f"DataFrame查询失败: {e}")
+            logger.error(f"问题查询: {query}")
+            if params:
+                logger.error(f"查询参数: {params}")
+            raise
+        finally:
+            self._release_query_slot()
+
     def fetch_one(self, query: str, params: tuple = None):
         """
-        执行查询并返回单行结果（线程安全）
-        
+        执行查询并返回单行结果（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+
         Args:
             query: SQL查询语句
             params: 查询参数
-            
+
         Returns:
             单行结果
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                return result.fetchone()
-            except Exception as e:
-                logger.error(f"单行查询失败: {e}")
-                logger.error(f"问题查询: {query}")
-                if params:
-                    logger.error(f"查询参数: {params}")
-                raise
-    
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            return result.fetchone()
+        except Exception as e:
+            logger.error(f"单行查询失败: {e}")
+            logger.error(f"问题查询: {query}")
+            if params:
+                logger.error(f"查询参数: {params}")
+            raise
+        finally:
+            self._release_query_slot()
+
     def fetch_all(self, query: str, params: tuple = None):
         """
-        执行查询并返回所有结果（线程安全）
-        
+        执行查询并返回所有结果（线程安全，可选并发控制）
+
+        使用线程本地 cursor，DuckDB 内部处理并发控制
+
         Args:
             query: SQL查询语句
             params: 查询参数
-            
+
         Returns:
             所有结果
         """
-        with self._lock:
-            try:
-                if params:
-                    result = self._connection.execute(query, params)
-                else:
-                    result = self._connection.execute(query)
-                return result.fetchall()
-            except Exception as e:
-                logger.error(f"全量查询失败: {e}")
-                logger.error(f"问题查询: {query}")
-                if params:
-                    logger.error(f"查询参数: {params}")
-                raise
+        self._acquire_query_slot()
+        try:
+            cursor = self._get_cursor()
+            if params:
+                result = cursor.execute(query, params)
+            else:
+                result = cursor.execute(query)
+            return result.fetchall()
+        except Exception as e:
+            logger.error(f"全量查询失败: {e}")
+            logger.error(f"问题查询: {query}")
+            if params:
+                logger.error(f"查询参数: {params}")
+            raise
+        finally:
+            self._release_query_slot()
     
     def close(self):
         """关闭数据库连接"""
@@ -277,8 +422,16 @@ class DatabaseManager:
 
 class KlineDBManager(DatabaseManager):
 
-    def __init__(self, database_path: str = None, new: bool = False):
-        super().__init__(database_path, new)
+    def __init__(self, database_path: str = None, new: bool = False, max_concurrent: int = None):
+        """
+        初始化 Kline 数据库管理器
+
+        Args:
+            database_path: 数据库文件路径
+            new: 是否重新创建数据库
+            max_concurrent: 最大并发查询数（可选）
+        """
+        super().__init__(database_path, new, max_concurrent)
         self._init_database()
         divider("数据库已启动")
 
@@ -289,38 +442,68 @@ class KlineDBManager(DatabaseManager):
             PRIMARY KEY (key)
         );""")
         self._verify_kline_interval_consistency()
-        self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_perp{SUFFIX} (
-            open_time TIMESTAMP,
-            symbol VARCHAR,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            quote_volume DOUBLE,
-            trade_num INT,
-            taker_buy_base_asset_volume DOUBLE,
-            taker_buy_quote_asset_volume DOUBLE,
-            avg_price DOUBLE,
-            PRIMARY KEY (open_time, symbol)
-        );""")
 
-        self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_spot{SUFFIX} (
-            open_time TIMESTAMP,
-            symbol VARCHAR,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume DOUBLE,
-            quote_volume DOUBLE,
-            trade_num INT,
-            taker_buy_base_asset_volume DOUBLE,
-            taker_buy_quote_asset_volume DOUBLE,
-            avg_price DOUBLE,
-            PRIMARY KEY (open_time, symbol)
-        );""")
+        # 条件创建 usdt_perp 表
+        if 'usdt_perp' in DATA_SOURCES:
+            self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_perp{SUFFIX} (
+                open_time TIMESTAMP,
+                symbol VARCHAR,
+                open DOUBLE,
+                high DOUBLE,
+                low DOUBLE,
+                close DOUBLE,
+                volume DOUBLE,
+                quote_volume DOUBLE,
+                trade_num INT,
+                taker_buy_base_asset_volume DOUBLE,
+                taker_buy_quote_asset_volume DOUBLE,
+                avg_price DOUBLE,
+                PRIMARY KEY (open_time, symbol)
+            );""")
+            logger.info(f"usdt_perp{SUFFIX} 表已创建")
 
+        # 条件创建 usdt_spot 表
+        if 'usdt_spot' in DATA_SOURCES:
+            self.execute_write(f"""CREATE TABLE IF NOT EXISTS usdt_spot{SUFFIX} (
+                open_time TIMESTAMP,
+                symbol VARCHAR,
+                open DOUBLE,
+                high DOUBLE,
+                low DOUBLE,
+                close DOUBLE,
+                volume DOUBLE,
+                quote_volume DOUBLE,
+                trade_num INT,
+                taker_buy_base_asset_volume DOUBLE,
+                taker_buy_quote_asset_volume DOUBLE,
+                avg_price DOUBLE,
+                PRIMARY KEY (open_time, symbol)
+            );""")
+            logger.info(f"usdt_spot{SUFFIX} 表已创建")
+
+        # 条件创建 funding 表
+        if 'funding' in DATA_SOURCES:
+            self.execute_write("""CREATE TABLE IF NOT EXISTS funding (
+                symbol VARCHAR,
+                snap_time TIMESTAMP,
+                funding_rate DOUBLE,
+                mark_price DOUBLE,
+                PRIMARY KEY (symbol, snap_time)
+            );""")
+            logger.info("funding 表已创建")
+
+        # 条件创建 open_interest 表
+        if 'oi' in DATA_SOURCES:
+            self.execute_write("""CREATE TABLE IF NOT EXISTS open_interest (
+                symbol VARCHAR,
+                sum_open_interest DOUBLE,
+                sum_open_interest_value DOUBLE,
+                snap_time TIMESTAMP,
+                PRIMARY KEY (symbol, snap_time)
+            );""")
+            logger.info("open_interest 表已创建")
+
+        # 创建交易所信息表（始终需要）
         self.execute_write("""CREATE TABLE IF NOT EXISTS exginfo (
             market VARCHAR,
             symbol VARCHAR,
