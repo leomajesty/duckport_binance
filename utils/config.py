@@ -11,10 +11,18 @@ from datetime import datetime, timezone
 import pandas as pd
 from dotenv import load_dotenv
 
-from utils.log_kit import logger
+from utils.log_kit import logger, divider
 
+import argparse
+  
+# 解析命令行参数（必须在导入 utils.config 之前）
+parser = argparse.ArgumentParser(description='Flight服务器启动脚本')
+parser.add_argument('-e', '--env-file', type=str, default='config.env', 
+                    help='指定环境变量文件路径（默认：config.env）')
+args = parser.parse_args()
+divider(f'start duckport with env: {args.env_file}')
 # Load environment variables
-load_dotenv('config.env')
+load_dotenv(args.env_file)
 KLINE_INTERVAL = os.getenv("KLINE_INTERVAL", "5m")  # Default interval for kline data
 KLINE_INTERVAL_MINUTES = int(KLINE_INTERVAL.replace('m', ''))
 SUFFIX = f"_{KLINE_INTERVAL_MINUTES}m"
