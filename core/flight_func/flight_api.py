@@ -372,6 +372,15 @@ class FlightGets:
         table = pa.Table.from_pandas(self.exginfo[market])
         return flight.RecordBatchStream(table)
 
+    def get_query(self, sql, **kwargs):
+        """执行通用SQL查询"""
+        try:
+            logger.info(f"执行通用SQL查询: {sql[:200]}...")  # 只打印前200个字符
+            return self._execute_query(sql)
+        except Exception as e:
+            logger.error(f"通用SQL查询失败: {e}")
+            raise
+
     def update_exginfo(self, market, exginfo_df):
         """更新exginfo内存缓存"""
         self.exginfo[market] = exginfo_df

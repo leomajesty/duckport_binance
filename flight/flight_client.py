@@ -179,6 +179,25 @@ class FlightClient:
             logger.error(f"获取交易所信息失败: {e}")
             return None
 
+    def do_query(self, query: str):
+        """执行通用SQL查询"""
+        try:
+            # 创建ticket
+            ticket_dict = {"type": "query", "sql": query}
+            logger.info(f"执行SQL查询: {query[:100]}...")  # 只打印前100个字符
+            # dict转json str
+            ticket = flight.Ticket(str(json.dumps(ticket_dict)).encode())
+
+            # 获取数据
+            reader = self.client.do_get(ticket)
+            table = reader.read_all()
+
+            logger.info(f"查询返回 {table.num_rows} 行数据")
+            return table
+        except Exception as e:
+            logger.error(f"执行SQL查询失败: {e}")
+            return None
+
     def close(self):
         """关闭客户端连接"""
         try:
