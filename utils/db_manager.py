@@ -60,7 +60,7 @@ class DatabaseManager:
         self._init_connection()
 
         if max_concurrent:
-            logger.info(f"✓ 并发控制已启用: 最大并发查询数 = {max_concurrent}")
+            logger.info(f"并发控制已启用: 最大并发查询数 = {max_concurrent}")
 
     def destroy_all(self):
         if self.database_path and os.path.exists(self.database_path):
@@ -103,7 +103,6 @@ class DatabaseManager:
         """
         if not hasattr(self._thread_local, 'cursor'):
             self._thread_local.cursor = self._connection.cursor()
-            logger.debug(f"为线程 {threading.current_thread().name} 创建新 cursor")
         return self._thread_local.cursor
 
     def _acquire_query_slot(self):
