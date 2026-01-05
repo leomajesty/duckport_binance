@@ -10,9 +10,9 @@ TRADE_TYPE_MAP = {
     'btc_spot': (TradingSpotFilter(quote_asset='BTC', keep_stablecoins=False), 'spot'),
 
     # usdt_futures
-    'usdt_perp': (TradingUsdtFuturesFilter(quote_asset='USDT', types=['PERPETUAL']), 'um'),
+    'usdt_perp': (TradingUsdtFuturesFilter(quote_asset='USDT', types=['PERPETUAL', 'TRADIFI_PERPETUAL']), 'um'),
     'usdt_deli': (TradingUsdtFuturesFilter(quote_asset='USDT', types=DELIVERY_TYPES), 'um'),
-    'usdc_perp': (TradingUsdtFuturesFilter(quote_asset='USDC', types=['PERPETUAL']), 'um'),
+    'usdc_perp': (TradingUsdtFuturesFilter(quote_asset='USDC', types=['PERPETUAL', 'TRADIFI_PERPETUAL']), 'um'),
 
     # 仅包含 ETHBTC 永续合约，属于 U 本位合约
     'btc_perp': (TradingUsdtFuturesFilter(quote_asset='BTC', types=['PERPETUAL']), 'um'),
