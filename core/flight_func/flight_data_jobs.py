@@ -182,8 +182,8 @@ class DataJobs:
         """定时导出parquet文件,并清理过期的duckdb数据"""
         async def periodic():
             while True:
-                # 每8小时的第3分钟执行
-                next_time = next_run_time('8h') + timedelta(minutes=3)
+                # 每8小时的第3分30秒执行
+                next_time = next_run_time('8h') + timedelta(minutes=3) + timedelta(seconds=30)
                 divider(f"[Scheduler] next retention job runtime: {next_time:%Y-%m-%d %H:%M:%S}", display_time=False)
                 await async_sleep_until_run_time(next_time)
                 try:
