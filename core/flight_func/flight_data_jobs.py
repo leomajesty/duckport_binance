@@ -201,7 +201,7 @@ class DataJobs:
             try:
                 duck_time = self._flight_actions.duck_time[market]
                 cutoff_time = duck_time - timedelta(days=RETENTION_DAYS)
-                pqt_info = get_latest_complete_parquet_file(cutoff_time, market=market)
+                pqt_info = get_latest_complete_parquet_file(cutoff_time, market=market, interval=KLINE_INTERVAL)
                 if pqt_info and not pqt_info['exists']:
                     filename = pqt_info['filename']
                     with timer(f'{market} retention task: {filename}'):
