@@ -32,7 +32,7 @@ def get_usdt_futures_multi_candlesticks_socket(symbols, time_inteval):
     return ReconnectingWebsocket(
         path='/'.join(channels),
         url=USDT_FUTURES_FSTREAM_URL,
-        prefix='stream?streams=',
+        prefix='market/stream?streams=',
         proxy=proxy
     )
 
